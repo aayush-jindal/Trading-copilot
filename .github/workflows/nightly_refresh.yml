@@ -1,0 +1,16 @@
+name: Nightly Watchlist Refresh
+
+on:
+  schedule:
+    - cron: '0 22 * * 1-5'  # 5 PM ET (22:00 UTC) on weekdays
+  workflow_dispatch:         # allow manual trigger from GitHub UI
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger nightly refresh
+        run: |
+          curl -X POST "${{ secrets.API_URL }}/internal/refresh-watchlist" \
+            -H "Authorization: Bearer ${{ secrets.INTERNAL_SECRET }}" \
+            --fail --silent --show-error

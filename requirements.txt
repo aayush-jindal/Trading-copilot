@@ -1,0 +1,16 @@
+fastapi
+uvicorn[standard]
+yfinance
+pandas
+pydantic
+ta
+scipy
+TA-Lib
+anthropic
+openai
+python-jose[cryptography]
+bcrypt
+python-multipart
+psycopg2-binary
+pytest
+httpx
