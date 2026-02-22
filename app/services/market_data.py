@@ -1,9 +1,13 @@
+import time
 from datetime import datetime, timedelta, timezone
 
 import yfinance as yf
 
 from app.config import HISTORY_PERIOD, STALENESS_HOURS
 from app.database import get_db
+
+_RATE_LIMIT_RETRIES = 3
+_RATE_LIMIT_WAIT    = 8  # seconds between retries
 
 
 def is_data_stale(symbol: str) -> bool:
@@ -21,13 +25,38 @@ def is_data_stale(symbol: str) -> bool:
 
 
 def fetch_ticker_data(symbol: str) -> None:
+    last_err: Exception | None = None
+    for attempt in range(_RATE_LIMIT_RETRIES):
+        try:
+            return _fetch_once(symbol)
+        except Exception as e:
+            msg = str(e).lower()
+            if "rate" in msg or "too many" in msg or "429" in msg:
+                last_err = e
+                time.sleep(_RATE_LIMIT_WAIT * (attempt + 1))
+            else:
+                raise
+    raise last_err or RuntimeError(f"Failed to fetch {symbol} after {_RATE_LIMIT_RETRIES} attempts")
+
+
+def _fetch_once(symbol: str) -> None:
     ticker = yf.Ticker(symbol)
     hist = ticker.history(period=HISTORY_PERIOD)
 
     if hist.empty:
         raise ValueError(f"No data found for {symbol}")
 
-    info = ticker.info
+    # ticker.info is best-effort — Yahoo Finance rate-limits this endpoint
+    # aggressively from cloud IPs. Price data is what matters; metadata is nice-to-have.
+    company_name = sector = market_cap = None
+    try:
+        info = ticker.info
+        company_name = info.get("longName")
+        sector       = info.get("sector")
+        market_cap   = info.get("marketCap")
+    except Exception:
+        pass
+
     now = datetime.now(timezone.utc).isoformat()
 
     conn = get_db()
@@ -35,15 +64,15 @@ def fetch_ticker_data(symbol: str) -> None:
         """INSERT INTO tickers (symbol, company_name, sector, market_cap, last_updated)
            VALUES (%s, %s, %s, %s, %s)
            ON CONFLICT (symbol) DO UPDATE SET
-             company_name = EXCLUDED.company_name,
-             sector       = EXCLUDED.sector,
-             market_cap   = EXCLUDED.market_cap,
+             company_name = COALESCE(EXCLUDED.company_name, tickers.company_name),
+             sector       = COALESCE(EXCLUDED.sector,       tickers.sector),
+             market_cap   = COALESCE(EXCLUDED.market_cap,   tickers.market_cap),
              last_updated = EXCLUDED.last_updated""",
         (
             symbol,
-            info.get("longName"),
-            info.get("sector"),
-            info.get("marketCap"),
+            company_name,
+            sector,
+            market_cap,
             now,
         ),
     )
