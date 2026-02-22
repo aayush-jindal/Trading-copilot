@@ -18,22 +18,21 @@ Set `SYNTHESIS_PROVIDER=openai` and supply `OPENAI_API_KEY` to switch to OpenAI.
 
 ---
 
-## Step 1 — Create a PostgreSQL Database on Render
+## Step 1 — PostgreSQL Database (Render or Neon)
+
+Use either Render’s PostgreSQL or [Neon](https://neon.tech) (serverless Postgres). You only need one.
+
+### Option A — Render PostgreSQL
 
 1. Go to [render.com](https://render.com) → **New → PostgreSQL**
-2. Configure:
+2. Configure name, region, plan (Free or paid).
+3. After creation, copy the **Internal Database URL** and use it as `DATABASE_URL` (or link it via **Environment → Link a Database** so Render injects it).
 
-| Setting | Value |
-|---|---|
-| **Name** | `trading-copilot-db` (or any name) |
-| **Region** | Same region as your Web Service |
-| **Plan** | Free (or paid for production) |
+### Option B — Neon
 
-3. After creation, copy the **Internal Database URL** — it looks like:
-```
-postgresql://trading_copilot_user:PASSWORD@dpg-xxxx.oregon-postgres.render.com/trading_copilot
-```
-You'll paste this as `DATABASE_URL` in the next step.
+1. Create a project at [neon.tech](https://neon.tech) and create a database.
+2. Copy the **connection string** from the Neon dashboard (e.g. `postgresql://user:pass@ep-xxx.us-east-2.aws.neon.tech/neondb?sslmode=require`).
+3. In Render, set `DATABASE_URL` to this string. Neon often requires `?sslmode=require` — include it if your URL doesn’t already have it.
 
 ---
 
@@ -47,10 +46,14 @@ You'll paste this as `DATABASE_URL` in the next step.
 
 | Setting | Value |
 |---|---|
-| **Environment** | Docker |
+| **Environment** | **Docker** |
 | **Dockerfile Path** | `docker/Dockerfile` |
 | **Docker Context** | `.` (repo root) |
+| **Root Directory** | Leave **empty** (repo root). Render builds from the connected repo; the Dockerfile path is relative to that. |
+| **Build Command** | Leave **empty**. The Dockerfile defines the build (`COPY` + `pip install`). |
 | **Instance Type** | Starter ($7/mo) or higher |
+
+Render will build the image from the Dockerfile and run the container. The app listens on the port Render assigns (the Dockerfile uses the `PORT` env var).
 
 ### Environment Variables (Render)
 

@@ -14,6 +14,8 @@ def analyze(ticker: str):
         ticker_info, price_list, source = get_or_refresh_data(ticker)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
 
     try:
         df = _prepare_dataframe(price_list)
