@@ -5,7 +5,7 @@ from fastapi.responses import StreamingResponse
 
 from app.config import ANTHROPIC_API_KEY, OPENAI_API_KEY, SYNTHESIS_PROVIDER
 from app.services.ai_engine import stream_narrative
-from app.services.market_data import get_or_refresh_data
+from app.services.market_data import get_or_refresh_data, get_weekly_prices
 from app.services.ta_engine import _prepare_dataframe, analyze_ticker
 
 router = APIRouter(prefix="/synthesize", tags=["synthesis"])
@@ -20,9 +20,14 @@ async def synthesize(ticker: str):
         raise HTTPException(status_code=404, detail=str(e))
 
     try:
+        weekly_price_list = get_weekly_prices(ticker.upper())
+    except Exception:
+        weekly_price_list = []
+
+    try:
         df = _prepare_dataframe(price_list)
         price = float(df["close"].iloc[-1])
-        analysis = analyze_ticker(df, ticker_info["symbol"], price)
+        analysis = analyze_ticker(df, ticker_info["symbol"], price, weekly_price_list)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:

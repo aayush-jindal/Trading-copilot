@@ -14,6 +14,7 @@ import NotificationsPanel from '../components/NotificationsPanel'
 import SearchBar from '../components/SearchBar'
 import PriceChart from '../components/PriceChart'
 import SignalPanel from '../components/SignalPanel'
+import SwingSetupPanel from '../components/SwingSetupPanel'
 import NarrativePanel from '../components/NarrativePanel'
 import TickerCard from '../components/TickerCard'
 import LoadingSkeleton from '../components/LoadingSkeleton'
@@ -90,7 +91,7 @@ export default function AnalysisPage() {
     setDays(newDays)
     setPrices([])
     try {
-      const priceRes = await fetchPrices(currentTicker, newDays)
+      const priceRes = await fetchPrices(currentTicker, newDays + 200)
       setTickerInfo(priceRes.ticker)
       setPrices(priceRes.prices)
     } catch (err) {
@@ -113,7 +114,7 @@ export default function AnalysisPage() {
 
     try {
       const [priceRes, analysisRes] = await Promise.all([
-        fetchPrices(ticker, days),
+        fetchPrices(ticker, days + 200),
         fetchAnalysis(ticker),
       ])
       setTickerInfo(priceRes.ticker)
@@ -285,6 +286,17 @@ export default function AnalysisPage() {
             <div className="[animation-delay:100ms]">
               {analysis && <SignalPanel analysis={analysis} />}
             </div>
+
+            {/* Swing setup */}
+            {analysis?.swing_setup && (
+              <div className="[animation-delay:125ms]">
+                <SwingSetupPanel
+                  setup={analysis.swing_setup}
+                  supportStrength={analysis.support_resistance.support_strength}
+                  resistanceStrength={analysis.support_resistance.resistance_strength}
+                />
+              </div>
+            )}
 
             {/* Narrative */}
             <div className="[animation-delay:150ms]">

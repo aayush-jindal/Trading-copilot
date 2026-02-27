@@ -2,19 +2,20 @@ import json
 from datetime import datetime, timezone
 
 from app.database import get_db
-from app.services.market_data import fetch_ticker_data, get_or_refresh_data
+from app.services.market_data import fetch_ticker_data, get_or_refresh_data, get_weekly_prices
 from app.services.ta_engine import analyze_ticker, _prepare_dataframe
 
 
 def _ticker_summary(symbol: str) -> str:
     """One-line summary for a ticker: 'AAPL → Bullish. RSI cooling from overbought.'"""
     ticker_info, price_list, _ = get_or_refresh_data(symbol)
-    if len(price_list) < 50:
+    if len(price_list) < 200:  # matches analyze_ticker minimum bar requirement
         return f"{symbol} → Insufficient data for analysis."
 
     last = price_list[-1]["close"]
+    weekly_price_list = get_weekly_prices(symbol)
     df = _prepare_dataframe(price_list)
-    analysis = analyze_ticker(df, symbol, last)
+    analysis = analyze_ticker(df, symbol, last, weekly_price_list)
 
     trend   = analysis["trend"]["signal"]
     rsi     = analysis["momentum"].get("rsi")

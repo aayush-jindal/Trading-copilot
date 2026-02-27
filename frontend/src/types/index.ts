@@ -22,6 +22,16 @@ export interface PriceHistoryResponse {
   source: string
 }
 
+export interface WeeklyTrend {
+  weekly_trend: string                // "BULLISH" | "BEARISH" | "NEUTRAL"
+  weekly_sma10: number | null
+  weekly_sma40: number | null
+  price_vs_weekly_sma10: string
+  price_vs_weekly_sma40: string
+  weekly_sma10_vs_sma40: string
+  weekly_trend_strength: string       // "STRONG" | "MODERATE" | "WEAK"
+}
+
 export interface TrendSignals {
   sma_20: number | null
   sma_50: number | null
@@ -73,17 +83,24 @@ export interface VolumeSignals {
   obv_trend: string
 }
 
+export interface SwingLevel {
+  price: number
+  strength: string  // "HIGH" | "MEDIUM" | "LOW"
+}
+
 export interface SupportResistance {
   high_52w: number
   low_52w: number
   distance_from_52w_high_pct: number
   distance_from_52w_low_pct: number
-  swing_highs: number[]
-  swing_lows: number[]
+  swing_highs: SwingLevel[]
+  swing_lows: SwingLevel[]
   nearest_resistance: number
   nearest_support: number
   distance_to_resistance_pct: number
   distance_to_support_pct: number
+  support_strength: string    // "HIGH" | "MEDIUM" | "LOW"
+  resistance_strength: string // "HIGH" | "MEDIUM" | "LOW"
 }
 
 export interface CandlestickSignal {
@@ -92,6 +109,71 @@ export interface CandlestickSignal {
   at_support: boolean
   at_resistance: boolean
   significance: string
+}
+
+export interface ReversalCandle {
+  pattern: string
+  bars_ago: number
+  raw_value: number
+  strength: 'normal' | 'strong'
+}
+
+export interface ReversalCandleCondition {
+  found: boolean
+  patterns: ReversalCandle[]
+}
+
+export interface SwingConditions {
+  uptrend_confirmed: boolean
+  weekly_trend_aligned: boolean
+  adx: number
+  adx_strong: boolean
+  rsi: number
+  rsi_cooldown: number
+  rsi_pullback_label: string
+  pullback_rsi_ok: boolean
+  near_support: boolean
+  near_resistance: boolean
+  volume_ratio: number
+  volume_declining: boolean
+  obv_trend: string
+  reversal_candle: ReversalCandleCondition
+  trigger_ok: boolean
+  trigger_price: number
+  trigger_volume_ok: boolean
+  trigger_bar_strength_ok: boolean
+  trigger_points: number
+  trigger_label: 'strong' | 'moderate' | 'weak' | 'not_fired'
+}
+
+export interface SwingLevels {
+  nearest_support: number
+  nearest_resistance: number
+  sr_alignment: string
+}
+
+export interface EntryZone {
+  low: number
+  high: number
+}
+
+export interface SwingRisk {
+  atr14: number
+  entry_zone: EntryZone
+  stop_loss: number
+  target: number
+  rr_to_resistance: number | null
+}
+
+export interface SwingSetup {
+  setup_type: string
+  verdict: 'ENTRY' | 'WATCH' | 'NO_TRADE'
+  setup_score: number
+  weekly_trend_warning: string | null
+  conditions: SwingConditions
+  levels: SwingLevels
+  risk: SwingRisk
+  reasons: string[]
 }
 
 export interface AnalysisResponse {
@@ -103,6 +185,8 @@ export interface AnalysisResponse {
   volume: VolumeSignals
   support_resistance: SupportResistance
   candlestick: CandlestickSignal[]
+  swing_setup: SwingSetup | null
+  weekly_trend: WeeklyTrend | null
 }
 
 export interface AuthResponse {

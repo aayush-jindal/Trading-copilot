@@ -62,6 +62,22 @@ def init_db() -> None:
     """)
 
     conn.execute("""
+        CREATE TABLE IF NOT EXISTS weekly_price_history (
+            id            SERIAL PRIMARY KEY,
+            ticker_symbol TEXT NOT NULL,
+            date          TEXT NOT NULL,
+            open          DOUBLE PRECISION,
+            high          DOUBLE PRECISION,
+            low           DOUBLE PRECISION,
+            close         DOUBLE PRECISION,
+            adj_close     DOUBLE PRECISION,
+            volume        BIGINT,
+            UNIQUE (ticker_symbol, date),
+            FOREIGN KEY (ticker_symbol) REFERENCES tickers(symbol)
+        )
+    """)
+
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS syntheses (
             id             SERIAL PRIMARY KEY,
             ticker_symbol  TEXT NOT NULL,

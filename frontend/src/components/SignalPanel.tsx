@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import type { AnalysisResponse } from '../types'
 
 interface SignalPanelProps {
@@ -13,6 +14,23 @@ const TOOLTIPS: Record<string, string> = {
   Resistance:      'Nearest price ceiling based on recent swing highs',
   Candlestick:     'Recent candlestick patterns detected on the daily chart',
   Trend:           'Overall trend signal based on SMA 20 / 50 / 200 alignment',
+}
+
+function strengthVariant(s: string): 'green' | 'yellow' | 'gray' {
+  if (s === 'HIGH') return 'green'
+  if (s === 'MEDIUM') return 'yellow'
+  return 'gray'
+}
+
+function weeklyTrendVariant(
+  weeklyTrend: string,
+  dailyTrend: string,
+): 'green' | 'red' | 'yellow' | 'gray' {
+  const w = (weeklyTrend ?? '').toUpperCase()
+  const d = (dailyTrend  ?? '').toUpperCase()
+  if (w === 'BULLISH') return 'green'
+  if (w === 'BEARISH') return d.includes('BULLISH') ? 'yellow' : 'red'
+  return 'gray'
 }
 
 function signalVariant(signal: string): 'green' | 'red' | 'yellow' | 'gray' {
@@ -73,7 +91,15 @@ function fmtPrice(n: number | null): string {
   return n == null ? '—' : `$${n.toFixed(2)}`
 }
 
-function Cell({ label, children }: { label: string; children: React.ReactNode }) {
+function Cell({
+  label,
+  children,
+  extra,
+}: {
+  label: string
+  children: React.ReactNode
+  extra?: React.ReactNode
+}) {
   return (
     <div
       className="glass-hover p-4 flex flex-col gap-2 cursor-default"
@@ -83,12 +109,55 @@ function Cell({ label, children }: { label: string; children: React.ReactNode })
       <div className="flex flex-wrap items-center gap-1.5 text-sm text-gray-100">
         {children}
       </div>
+      {extra}
+    </div>
+  )
+}
+
+function ExpandableLevels({
+  levels,
+  color,
+}: {
+  levels: { price: number; strength: string }[]
+  color: 'green' | 'red'
+}) {
+  const [open, setOpen] = useState(false)
+  if (levels.length === 0) return null
+  return (
+    <div className="border-t border-white/5 pt-1 mt-0.5">
+      <button
+        onClick={(e) => { e.stopPropagation(); setOpen((v) => !v) }}
+        className="flex items-center gap-1 text-[10px] text-gray-600 hover:text-gray-400 transition-colors"
+      >
+        <svg
+          className={`w-2.5 h-2.5 transition-transform ${open ? 'rotate-180' : ''}`}
+          fill="none" stroke="currentColor" viewBox="0 0 24 24"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
+        </svg>
+        {open ? 'fewer levels' : `+${levels.length} more`}
+      </button>
+      {open && (
+        <div className="mt-1.5 flex flex-col gap-1">
+          {levels.map((lvl, i) => (
+            <div key={i} className="flex items-center justify-between">
+              <span className={`text-xs font-mono ${color === 'green' ? 'text-green-400/70' : 'text-red-400/70'}`}>
+                ${lvl.price.toFixed(2)}
+              </span>
+              <Badge label={lvl.strength} variant={strengthVariant(lvl.strength)} />
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
 
 export default function SignalPanel({ analysis }: SignalPanelProps) {
   const { momentum, volatility, volume, support_resistance, candlestick, trend } = analysis
+
+  const additionalSupports    = (support_resistance.swing_lows  ?? []).slice(1, 5)
+  const additionalResistances = (support_resistance.swing_highs ?? []).slice(1, 5)
 
   const candlestickPatterns = candlestick.length > 0
     ? candlestick.map((c) => c.pattern).join(', ')
@@ -128,15 +197,23 @@ export default function SignalPanel({ analysis }: SignalPanelProps) {
         <Badge label={volume.volume_signal} variant={signalVariant(volume.volume_signal)} />
       </Cell>
 
-      <Cell label="Support">
+      <Cell
+        label="Support"
+        extra={<ExpandableLevels levels={additionalSupports} color="green" />}
+      >
         <span className="font-mono font-semibold text-green-400">{fmtPrice(support_resistance.nearest_support)}</span>
+        <Badge label={support_resistance.support_strength ?? 'LOW'} variant={strengthVariant(support_resistance.support_strength ?? 'LOW')} />
         <span className="text-xs text-gray-500">
           {fmtPct(support_resistance.distance_to_support_pct)} away
         </span>
       </Cell>
 
-      <Cell label="Resistance">
+      <Cell
+        label="Resistance"
+        extra={<ExpandableLevels levels={additionalResistances} color="red" />}
+      >
         <span className="font-mono font-semibold text-red-400">{fmtPrice(support_resistance.nearest_resistance)}</span>
+        <Badge label={support_resistance.resistance_strength ?? 'LOW'} variant={strengthVariant(support_resistance.resistance_strength ?? 'LOW')} />
         <span className="text-xs text-gray-500">
           {fmtPct(support_resistance.distance_to_resistance_pct)} away
         </span>
@@ -146,7 +223,26 @@ export default function SignalPanel({ analysis }: SignalPanelProps) {
         <span className="text-xs text-gray-300 capitalize">{candlestickPatterns}</span>
       </Cell>
 
-      <Cell label="Trend">
+      <Cell
+        label="Trend"
+        extra={
+          analysis.weekly_trend ? (
+            <div className="border-t border-white/5 pt-1.5 mt-0.5 flex items-center gap-1.5">
+              <span className="text-[10px] font-semibold text-gray-600 uppercase tracking-wider flex-shrink-0">
+                W
+              </span>
+              <Badge
+                label={analysis.weekly_trend.weekly_trend}
+                variant={weeklyTrendVariant(analysis.weekly_trend.weekly_trend, trend.signal)}
+                showIcon
+              />
+              <span className="text-[10px] text-gray-600 font-mono capitalize">
+                {analysis.weekly_trend.weekly_trend_strength.toLowerCase()}
+              </span>
+            </div>
+          ) : null
+        }
+      >
         <Badge label={trend.signal} variant={trendVariant} showIcon />
         <span className="text-xs text-gray-500 font-mono">@ ${analysis.price.toFixed(2)}</span>
       </Cell>

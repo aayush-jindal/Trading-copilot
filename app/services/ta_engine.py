@@ -8,6 +8,17 @@ from ta.volatility import AverageTrueRange, BollingerBands
 from ta.volume import OnBalanceVolumeIndicator
 
 
+_NEUTRAL_WEEKLY_TREND: dict = {
+    "weekly_trend": "NEUTRAL",
+    "weekly_sma10": None,
+    "weekly_sma40": None,
+    "price_vs_weekly_sma10": "below",
+    "price_vs_weekly_sma40": "below",
+    "weekly_sma10_vs_sma40": "below",
+    "weekly_trend_strength": "WEAK",
+}
+
+
 def _prepare_dataframe(price_list: list[dict]) -> pd.DataFrame:
     """Convert list[dict] from DB → DataFrame with DatetimeIndex."""
     df = pd.DataFrame(price_list)
@@ -268,52 +279,163 @@ def compute_volume_signals(df: pd.DataFrame) -> dict:
     }
 
 
-def compute_support_resistance(df: pd.DataFrame) -> dict:
-    """52w high/low, swing highs/lows via scipy argrelextrema."""
+def compute_support_resistance(df: pd.DataFrame, swing_lookback: int = 90) -> dict:
+    """Multi-window clustered S/R with touch-count significance scoring.
+
+    Three lookback windows are run simultaneously and combined before clustering,
+    so that recent structure, 1-year majors, and 2-year historical levels all
+    contribute to the final level set.
+
+    Args:
+        swing_lookback: Retained for backward compatibility; no longer used
+            internally. Previously controlled a single lookback window; the
+            implementation now always uses three fixed windows (90/252/504 days).
+    """
     close = df["close"]
-    price = close.iloc[-1]
+    high = df["high"]
+    low = df["low"]
+    price = float(close.iloc[-1])
+    high_vals = high.values
+    low_vals = low.values
 
-    # 52-week (252 trading days) high/low
+    # ── 52-week metrics (unchanged from v1) ──────────────────────────────────
     lookback_252 = min(len(df), 252)
-    recent = df.iloc[-lookback_252:]
-    high_52w = float(recent["high"].max())
-    low_52w = float(recent["low"].min())
-
+    recent_252 = df.iloc[-lookback_252:]
+    high_52w = float(recent_252["high"].max())
+    low_52w = float(recent_252["low"].min())
     dist_from_52w_high = round((price - high_52w) / high_52w * 100, 2)
     dist_from_52w_low = round((price - low_52w) / low_52w * 100, 2)
 
-    # Swing highs/lows from last 90 trading days
-    lookback_90 = min(len(df), 90)
-    recent_90 = df.iloc[-lookback_90:]
+    # ── Step 1: Multi-window swing detection ─────────────────────────────────
+    # Each (window_days, order) pair targets a different market structure scale.
+    # Smaller order → more sensitive to recent swings.
+    # Larger order → only captures truly prominent turning points.
+    _WINDOWS: list[tuple[int, int]] = [
+        (90,  3),   # recent structure — last ~4 months, sensitive detection
+        (252, 5),   # 1-year major levels — filters out noise
+        (504, 8),   # 2-year significant levels — only major turning points
+    ]
 
-    order = 5  # number of bars on each side
-    swing_high_idx = argrelextrema(recent_90["high"].values, np.greater_equal, order=order)[0]
-    swing_low_idx = argrelextrema(recent_90["low"].values, np.less_equal, order=order)[0]
+    raw_highs: list[float] = []
+    raw_lows: list[float] = []
 
-    swing_highs = sorted(set(round(float(recent_90["high"].iloc[i]), 2) for i in swing_high_idx), reverse=True)
-    swing_lows = sorted(set(round(float(recent_90["low"].iloc[i]), 2) for i in swing_low_idx))
+    for window_days, order in _WINDOWS:
+        n = min(len(df), window_days)
+        window_df = df.iloc[-n:]
+        hi_idx = argrelextrema(window_df["high"].values, np.greater_equal, order=order)[0]
+        lo_idx = argrelextrema(window_df["low"].values, np.less_equal, order=order)[0]
+        raw_highs.extend(float(window_df["high"].iloc[i]) for i in hi_idx)
+        raw_lows.extend(float(window_df["low"].iloc[i]) for i in lo_idx)
 
-    # Nearest resistance (swing high above price) and support (swing low below price)
-    resistances = [s for s in swing_highs if s > price]
-    supports = [s for s in swing_lows if s < price]
+    # ── Step 2: Cluster nearby levels (within 1%) ────────────────────────────
+    def _cluster(levels: list[float], tol_pct: float = 1.0) -> list[float]:
+        """Merge levels within tol_pct of the cluster's anchor (first member)."""
+        if not levels:
+            return []
+        clusters: list[list[float]] = [[sorted(levels)[0]]]
+        for lvl in sorted(levels)[1:]:
+            anchor = clusters[-1][0]
+            if abs(lvl - anchor) / anchor * 100 <= tol_pct:
+                clusters[-1].append(lvl)
+            else:
+                clusters.append([lvl])
+        return [sum(c) / len(c) for c in clusters]
 
-    nearest_resistance = min(resistances) if resistances else high_52w
-    nearest_support = max(supports) if supports else low_52w
+    clustered_highs = _cluster(raw_highs)
+    clustered_lows = _cluster(raw_lows)
 
-    dist_to_resistance = round((nearest_resistance - price) / price * 100, 2)
-    dist_to_support = round((price - nearest_support) / price * 100, 2)
+    # ── Step 3: Score each level by touch count over full price history ───────
+    def _score(level: float) -> tuple[int, str]:
+        """Count bars where the candle range overlaps the ±0.5% band around level."""
+        band_lo = level * 0.995
+        band_hi = level * 1.005
+        touches = int(np.sum((high_vals >= band_lo) & (low_vals <= band_hi)))
+        if touches >= 3:
+            return 3, "HIGH"
+        if touches >= 2:
+            return 2, "MEDIUM"
+        return 1, "LOW"
+
+    # Tuples of (price, weight, strength_label)
+    scored_highs: list[tuple[float, int, str]] = [(lvl, *_score(lvl)) for lvl in clustered_highs]
+    scored_lows: list[tuple[float, int, str]] = [(lvl, *_score(lvl)) for lvl in clustered_lows]
+
+    # ── Step 4: Select nearest support / resistance with weight preference ────
+    def _pick_nearest(
+        candidates: list[tuple[float, int, str]],
+        above: bool,
+    ) -> tuple[float, str] | tuple[None, None]:
+        """Return (price, strength) of the best level.
+
+        'Best' = nearest to current price, but if two candidates are within 1%
+        of each other the higher-weight one wins (tie-break: closer to price).
+        """
+        if not candidates:
+            return None, None
+        # Sort so [0] is always the raw nearest level
+        sorted_cands = sorted(candidates, key=lambda x: x[0] if above else -x[0])
+        nearest = sorted_cands[0]
+        # Gather all candidates within 1% of the raw nearest
+        close_group = [
+            c for c in sorted_cands
+            if abs(c[0] - nearest[0]) / nearest[0] * 100 <= 1.0
+        ]
+        # Highest weight wins; tie-break by absolute distance to current price
+        best = max(close_group, key=lambda x: (x[1], -abs(x[0] - price)))
+        return round(best[0], 2), best[2]
+
+    resistance_candidates = [(p, w, s) for p, w, s in scored_highs if p > price]
+    support_candidates = [(p, w, s) for p, w, s in scored_lows if p < price]
+
+    nearest_resistance_val, resistance_strength = _pick_nearest(resistance_candidates, above=True)
+    nearest_support_val, support_strength = _pick_nearest(support_candidates, above=False)
+
+    # Fall back to 52w extremes when no swing points found
+    if nearest_resistance_val is None:
+        nearest_resistance_val, resistance_strength = high_52w, "LOW"
+    if nearest_support_val is None:
+        nearest_support_val, support_strength = low_52w, "LOW"
+
+    dist_to_resistance = round((nearest_resistance_val - price) / price * 100, 2)
+    dist_to_support = round((price - nearest_support_val) / price * 100, 2)
+
+    # ── Step 5: Top-5 annotated level lists (nearest first) ──────────────────
+    # swing_highs: resistance levels strictly above current price, nearest first.
+    top_highs = sorted(
+        [(p, w, s) for p, w, s in scored_highs if p > price],
+        key=lambda x: x[0],
+    )[:5]
+
+    # swing_lows: support levels strictly below current price, nearest first.
+    top_lows = sorted(
+        [(p, w, s) for p, w, s in scored_lows if p < price],
+        key=lambda x: -x[0],
+    )[:5]
+
+    # If no swing-based resistance exists above price, fall back to 52w high.
+    if not top_highs:
+        top_highs = [(high_52w, 1, "LOW")]
+
+    # If no swing-based support exists below price, fall back to 52w low.
+    if not top_lows:
+        top_lows = [(low_52w, 1, "LOW")]
+
+    swing_highs_out = [{"price": round(p, 2), "strength": s} for p, _, s in top_highs]
+    swing_lows_out = [{"price": round(p, 2), "strength": s} for p, _, s in top_lows]
 
     return {
         "high_52w": high_52w,
         "low_52w": low_52w,
         "distance_from_52w_high_pct": dist_from_52w_high,
         "distance_from_52w_low_pct": dist_from_52w_low,
-        "swing_highs": swing_highs[:5],
-        "swing_lows": swing_lows[:5],
-        "nearest_resistance": nearest_resistance,
-        "nearest_support": nearest_support,
+        "swing_highs": swing_highs_out,
+        "swing_lows": swing_lows_out,
+        "nearest_resistance": nearest_resistance_val,
+        "nearest_support": nearest_support_val,
         "distance_to_resistance_pct": dist_to_resistance,
         "distance_to_support_pct": dist_to_support,
+        "support_strength": support_strength,
+        "resistance_strength": resistance_strength,
     }
 
 
@@ -332,6 +454,67 @@ def compute_candlestick_patterns(df: pd.DataFrame, support_resistance: dict) -> 
     at_resistance = abs(price - nearest_resistance) / price * 100 < 2 if nearest_resistance else False
     significance = "HIGH" if (at_support or at_resistance) else "LOW"
 
+    PATTERN_NAMES: dict[str, str] = {
+        "belthold": "Belt Hold",
+        "longline": "Long Line",
+        "separatinglines": "Separating Lines",
+        "invertedhammer": "Inverted Hammer",
+        "hammer": "Hammer",
+        "engulfing": "Engulfing",
+        "morningstar": "Morning Star",
+        "eveningstar": "Evening Star",
+        "morningdojistar": "Morning Doji Star",
+        "eveningdojistar": "Evening Doji Star",
+        "shootingstar": "Shooting Star",
+        "doji": "Doji",
+        "dojistar": "Doji Star",
+        "dragonflydoji": "Dragonfly Doji",
+        "gravestonedoji": "Gravestone Doji",
+        "harami": "Harami",
+        "haramicross": "Harami Cross",
+        "piercing": "Piercing Line",
+        "darkcloudcover": "Dark Cloud Cover",
+        "threewhitesoldiers": "Three White Soldiers",
+        "threeblackcrows": "Three Black Crows",
+        "risingthreemethods": "Rising Three Methods",
+        "fallingthreemethods": "Falling Three Methods",
+        "marubozu": "Marubozu",
+        "spinningtop": "Spinning Top",
+        "highwave": "High Wave",
+        "rickshawman": "Rickshaw Man",
+        "longleggeddoji": "Long Legged Doji",
+        "takuri": "Takuri",
+        "tristar": "Tri-Star",
+        "abandonedbaby": "Abandoned Baby",
+        "breakaway": "Breakaway",
+        "concealbabyswall": "Concealing Baby Swallow",
+        "counterattack": "Counterattack",
+        "gapsidesidewhite": "Gap Side-by-Side White",
+        "hikkake": "Hikkake",
+        "hikkakemod": "Modified Hikkake",
+        "homingpigeon": "Homing Pigeon",
+        "identical3crows": "Identical Three Crows",
+        "inneck": "In-Neck",
+        "kicking": "Kicking",
+        "kickingbylength": "Kicking By Length",
+        "ladderbottom": "Ladder Bottom",
+        "matchinglow": "Matching Low",
+        "onneck": "On-Neck",
+        "stalledpattern": "Stalled Pattern",
+        "sticksandwich": "Stick Sandwich",
+        "tasukigap": "Tasuki Gap",
+        "thrusting": "Thrusting",
+        "upsidegap2crows": "Upside Gap Two Crows",
+        "xsidegap3methods": "Upside/Downside Gap Three Methods",
+        "2crows": "Two Crows",
+        "3inside": "Three Inside Up/Down",
+        "3linestrike": "Three Line Strike",
+        "3outside": "Three Outside Up/Down",
+        "3starsinsouth": "Three Stars In The South",
+        "3blackcrows": "Three Black Crows",
+        "3whitesoldiers": "Three White Soldiers",
+    }
+
     # Get all TA-Lib candlestick pattern functions (CDL*)
     candle_funcs = talib.get_function_groups()["Pattern Recognition"]
 
@@ -341,10 +524,11 @@ def compute_candlestick_patterns(df: pd.DataFrame, support_resistance: dict) -> 
         result = func(o, h, l, c)
         last_val = int(result[-1])
         if last_val != 0:
-            pattern_name = func_name.replace("CDL", "").lower()
+            raw_name = func_name.replace("CDL", "").lower()
+            display_name = PATTERN_NAMES.get(raw_name, raw_name.replace("_", " ").title())
             pattern_type = "bullish" if last_val > 0 else "bearish"
             patterns.append({
-                "pattern": pattern_name,
+                "pattern": display_name,
                 "pattern_type": pattern_type,
                 "at_support": at_support,
                 "at_resistance": at_resistance,
@@ -354,10 +538,420 @@ def compute_candlestick_patterns(df: pd.DataFrame, support_resistance: dict) -> 
     return patterns
 
 
-def analyze_ticker(df: pd.DataFrame, symbol: str, price: float) -> dict:
+_BULLISH_REVERSAL_ALLOWLIST: frozenset[str] = frozenset({
+    "CDLENGULFING",
+    "CDLHAMMER",
+    "CDLINVERTEDHAMMER",
+    "CDLPIERCING",
+    "CDLMORNINGSTAR",
+    "CDLMORNINGDOJISTAR",
+    "CDLHARAMI",
+    "CDLHARAMICROSS",
+})
+
+
+def _find_reversal_candles(df: pd.DataFrame, scan_bars: int = 5) -> list[dict]:
+    """Scan the last scan_bars for bullish reversal patterns from the allowlist.
+
+    Returns one entry per matched CDL function (most recent bullish bar in window),
+    sorted by bars_ago ascending (most-recent first), then strength descending.
+    """
+    o = df["open"].values
+    h = df["high"].values
+    l = df["low"].values
+    c = df["close"].values
+
+    found: list[dict] = []
+    for func_name in _BULLISH_REVERSAL_ALLOWLIST:
+        func = getattr(talib, func_name)
+        result = func(o, h, l, c)
+        window = result[-scan_bars:]
+        # Iterate newest → oldest; take only the most recent bullish occurrence
+        for i in range(len(window) - 1, -1, -1):
+            val = int(window[i])
+            if val > 0:
+                bars_ago = (len(window) - 1) - i
+                found.append({
+                    "pattern": func_name.replace("CDL", "").lower(),
+                    "bars_ago": bars_ago,
+                    "raw_value": val,
+                    "strength": "strong" if abs(val) >= 200 else "normal",
+                })
+                break  # only the most recent hit per pattern
+
+    # Sort: most recent first, then strongest first within same recency
+    found.sort(key=lambda x: (x["bars_ago"], 0 if x["strength"] == "strong" else 1))
+    return found
+
+
+def compute_weekly_trend(weekly_df: pd.DataFrame) -> dict:
+    """Compute weekly trend using SMA10 and SMA40 on a weekly OHLCV DataFrame.
+
+    Requires at least 42 bars (SMA40 + 2-bar buffer) to be valid; returns
+    _NEUTRAL_WEEKLY_TREND if data is missing or insufficient.
+    """
+    if weekly_df is None or len(weekly_df) < 42:
+        return _NEUTRAL_WEEKLY_TREND.copy()
+
+    close = weekly_df["close"]
+    price = float(close.iloc[-1])
+
+    sma10_series = SMAIndicator(close, window=10).sma_indicator()
+    sma40_series = SMAIndicator(close, window=40).sma_indicator()
+
+    sma10_val = float(sma10_series.iloc[-1]) if pd.notna(sma10_series.iloc[-1]) else None
+    sma40_val = float(sma40_series.iloc[-1]) if pd.notna(sma40_series.iloc[-1]) else None
+
+    if sma10_val is None or sma40_val is None:
+        return _NEUTRAL_WEEKLY_TREND.copy()
+
+    above_sma10      = price > sma10_val
+    above_sma40      = price > sma40_val
+    sma10_above_sma40 = sma10_val > sma40_val
+
+    if above_sma10 and above_sma40 and sma10_above_sma40:
+        weekly_trend = "BULLISH"
+    elif not above_sma10 and not above_sma40 and not sma10_above_sma40:
+        weekly_trend = "BEARISH"
+    else:
+        weekly_trend = "NEUTRAL"
+
+    dist_from_sma40_pct = abs(price - sma40_val) / sma40_val * 100
+    if weekly_trend in ("BULLISH", "BEARISH") and dist_from_sma40_pct > 2.0:
+        weekly_trend_strength = "STRONG"
+    elif weekly_trend in ("BULLISH", "BEARISH"):
+        weekly_trend_strength = "MODERATE"
+    else:
+        weekly_trend_strength = "WEAK"
+
+    return {
+        "weekly_trend":            weekly_trend,
+        "weekly_sma10":            round(sma10_val, 2),
+        "weekly_sma40":            round(sma40_val, 2),
+        "price_vs_weekly_sma10":   "above" if above_sma10 else "below",
+        "price_vs_weekly_sma40":   "above" if above_sma40 else "below",
+        "weekly_sma10_vs_sma40":   "above" if sma10_above_sma40 else "below",
+        "weekly_trend_strength":   weekly_trend_strength,
+    }
+
+
+def compute_swing_setup_pullback(
+    df: pd.DataFrame,
+    trend: dict,
+    momentum: dict,
+    volatility: dict,
+    volume: dict,
+    support_resistance: dict,
+    weekly_trend: dict | None = None,
+) -> dict:
+    """Detect a bullish 'Pullback in Uptrend' daily swing setup.
+
+    Scores 0-100 and returns verdict: ENTRY / WATCH / NO_TRADE.
+    All inputs are pre-computed signal dicts from analyze_ticker; no re-fetching.
+    """
+    price = float(df["close"].iloc[-1])
+
+    # ── Weekly trend alignment (hard gate — no score impact) ─────────────────
+    # If weekly_trend is None (no data / direct call from tests) treat as aligned
+    # so existing tests and callers without weekly data are not penalised.
+    _wt = weekly_trend or {}
+    weekly_trend_aligned: bool = (
+        weekly_trend is None
+        or _wt.get("weekly_trend") == "BULLISH"
+    )
+
+    # ── A) Uptrend confirmation ───────────────────────────────────────────────
+    sma_50_val = trend.get("sma_50") or 0.0
+    sma_200_val = trend.get("sma_200") or 0.0
+    uptrend_confirmed: bool = bool(
+        trend.get("price_vs_sma200") == "above"
+        and trend.get("price_vs_sma50") == "above"
+        and sma_50_val > sma_200_val
+    )
+
+    # ADX — not computed elsewhere; scoped locally to swing setup
+    h_arr = df["high"].values
+    l_arr = df["low"].values
+    c_arr = df["close"].values
+    adx_arr = talib.ADX(h_arr, l_arr, c_arr, timeperiod=14)
+    adx_clean = adx_arr[~np.isnan(adx_arr)]
+    adx_val: float = round(float(adx_clean[-1]), 2) if len(adx_clean) > 0 else 0.0
+    adx_strong: bool = adx_val >= 20
+
+    # ── B) Pullback quality ───────────────────────────────────────────────────
+    rsi: float = float(momentum.get("rsi") or 0.0)
+
+    # RSI cooldown-from-peak: measures how far RSI has pulled back from its
+    # recent high rather than checking a fixed band.
+    _rsi_series = RSIIndicator(df["close"], window=14).rsi()
+    _rsi_peak_raw = _rsi_series.iloc[-20:].max()
+    rsi_peak: float = float(_rsi_peak_raw) if pd.notna(_rsi_peak_raw) else rsi
+    rsi_cooldown: float = round(rsi_peak - rsi, 1)
+
+    if rsi < 35 or rsi > 70:
+        # Floor: momentum collapse / Ceiling: still overbought
+        rsi_ok, rsi_label = False, "no_pullback"
+    elif rsi_cooldown >= 15:
+        rsi_ok, rsi_label = True, "healthy_pullback"
+    elif rsi_cooldown >= 8:
+        rsi_ok, rsi_label = True, "moderate_pullback"
+    elif rsi_cooldown >= 3:
+        rsi_ok, rsi_label = True, "mild_pullback"
+    else:
+        rsi_ok, rsi_label = False, "no_pullback"
+
+    atr: float = float(volatility.get("atr") or 0.0)
+    nearest_support: float = float(support_resistance.get("nearest_support") or 0.0)
+    nearest_resistance: float = float(support_resistance.get("nearest_resistance") or 0.0)
+    dist_to_support_pct: float = float(support_resistance.get("distance_to_support_pct") or 999.0)
+    dist_to_resistance_pct: float = float(support_resistance.get("distance_to_resistance_pct") or 999.0)
+
+    dist_to_support_abs: float = abs(price - nearest_support) if nearest_support > 0 else 999.0
+    near_support_atr: bool = bool(atr > 0 and nearest_support > 0 and dist_to_support_abs <= 0.75 * atr)
+    near_support_pct: bool = bool(nearest_support > 0 and dist_to_support_pct < 3.0)
+    near_support: bool = near_support_atr or near_support_pct
+
+    dist_to_resistance_abs: float = abs(price - nearest_resistance) if nearest_resistance > 0 else 999.0
+    near_resistance_atr: bool = bool(atr > 0 and nearest_resistance > 0 and dist_to_resistance_abs <= 0.75 * atr)
+    near_resistance_pct: bool = bool(nearest_resistance > 0 and dist_to_resistance_pct < 3.0)
+    near_resistance: bool = near_resistance_atr or near_resistance_pct
+
+    volume_ratio: float = float(volume.get("volume_ratio") or 0.0)
+    volume_declining: bool = volume_ratio < 1.0
+    obv_trend: str = str(volume.get("obv_trend") or "NEUTRAL")
+
+    # ── C) Candlestick confirmation ───────────────────────────────────────────
+    reversal_candles = _find_reversal_candles(df, scan_bars=5)
+    reversal_found: bool = bool(reversal_candles)
+
+    # ── D) Trigger: 3-bar breakout with volume + bar-strength confirmation ──
+    three_bar_high = float(df["high"].iloc[-4:-1].max())
+    trigger_price: float = three_bar_high
+
+    price_trigger: bool = bool(price > three_bar_high)
+
+    current_volume: float = float(volume.get("current_volume") or 0.0)
+    avg_volume_20d: float = float(volume.get("avg_volume_20d") or 0.0)
+    trigger_volume_ok: bool = bool(
+        avg_volume_20d > 0.0 and current_volume >= avg_volume_20d
+    )
+
+    bar_high = float(df["high"].iloc[-1])
+    bar_low = float(df["low"].iloc[-1])
+    bar_range = bar_high - bar_low
+    trigger_bar_strength_ok: bool
+    if bar_range > 0:
+        trigger_bar_strength_ok = bool(
+            (price - bar_low) / bar_range > 0.5
+        )
+    else:
+        trigger_bar_strength_ok = False
+
+    if price_trigger:
+        trigger_ok = True
+        if trigger_volume_ok and trigger_bar_strength_ok:
+            trigger_points = 10
+            trigger_label = "strong"
+        elif trigger_volume_ok or trigger_bar_strength_ok:
+            trigger_points = 7
+            trigger_label = "moderate"
+        else:
+            trigger_points = 4
+            trigger_label = "weak"
+    else:
+        trigger_ok = False
+        trigger_points = 0
+        trigger_label = "not_fired"
+
+    # ── E) Risk levels ────────────────────────────────────────────────────────
+    if nearest_support > 0:
+        entry_zone_low = round(nearest_support - 0.5 * atr, 2)
+        entry_zone_high = round(nearest_support + 0.5 * atr, 2)
+        stop_loss = round(nearest_support - 1.0 * atr, 2)
+    else:
+        entry_zone_low = round(price - 0.5 * atr, 2)
+        entry_zone_high = round(price + 0.5 * atr, 2)
+        stop_loss = round(price - 1.5 * atr, 2)
+
+    if nearest_resistance > 0:
+        target = round(nearest_resistance, 2)
+    else:
+        target = round(price + 2.0 * (price - stop_loss), 2)
+
+    rr_to_resistance: float | None = None
+    if nearest_resistance > 0 and price > stop_loss:
+        rr_to_resistance = round((nearest_resistance - price) / (price - stop_loss), 2)
+
+    # ── F) SR alignment ───────────────────────────────────────────────────────
+    if near_support:
+        sr_alignment = "aligned"
+    elif near_resistance:
+        sr_alignment = "misaligned"
+    else:
+        sr_alignment = "neutral"
+
+    # ── Scoring (0–100) ───────────────────────────────────────────────────────
+    score = 0
+
+    # Uptrend confirmation: 30 pts
+    if uptrend_confirmed:
+        score += 30
+
+    # ADX: 10 pts, partial credit for 15–25
+    if adx_val >= 25:
+        score += 10
+    elif adx_val >= 20:
+        score += 7
+    elif adx_val >= 15:
+        score += 4
+
+    # Pullback quality (RSI + near_support): 25 pts
+    # RSI: 13 pts (healthy/moderate), 6 pts (mild), 0 pts (none)
+    # near_support: 12 pts; combined max = 25
+    rsi_pts = 13 if (rsi_ok and rsi_label != "mild_pullback") else (6 if rsi_label == "mild_pullback" else 0)
+    score += rsi_pts + (12 if near_support else 0)
+
+    # Volume / OBV: 10 pts
+    if obv_trend == "RISING":
+        score += 6
+    if volume_declining:
+        score += 4
+    elif volume_ratio > 1.3:
+        score -= 3  # elevated volume on pullback is a warning sign
+
+    # Candlestick reversal: 15 pts
+    if reversal_candles:
+        min_bars_ago = min(rc["bars_ago"] for rc in reversal_candles)
+        score += 15 if min_bars_ago <= 2 else 8
+
+    # Trigger: up to 10 pts (3-bar breakout + confirmations)
+    score += trigger_points
+
+    score = max(0, min(100, score))
+
+    # ── Verdict ───────────────────────────────────────────────────────────────
+    in_entry_zone = entry_zone_low <= price <= entry_zone_high
+
+    if (
+        uptrend_confirmed
+        and near_support
+        and reversal_found
+        and trigger_ok
+        and score >= 70
+    ):
+        verdict = "ENTRY"
+    elif (
+        uptrend_confirmed
+        and (near_support or rsi_ok)
+        and score >= 55
+    ):
+        verdict = "WATCH"
+    else:
+        verdict = "NO_TRADE"
+
+    # Weekly trend is a hard gate: cap ENTRY at WATCH when not aligned
+    weekly_trend_warning: str | None = None
+    if not weekly_trend_aligned and verdict == "ENTRY":
+        verdict = "WATCH"
+        weekly_trend_warning = "Daily setup forming against weekly trend — reduced conviction"
+
+    # ── Reasons ───────────────────────────────────────────────────────────────
+    reasons: list[str] = [
+        (
+            f"uptrend_confirmed={uptrend_confirmed} "
+            f"(price_vs_sma50={trend.get('price_vs_sma50')}, "
+            f"price_vs_sma200={trend.get('price_vs_sma200')})"
+        ),
+        f"ADX={adx_val:.1f} adx_strong={adx_strong}",
+        f"RSI={rsi:.1f} cooldown={rsi_cooldown:.1f}pts label={rsi_label} pullback_rsi_ok={rsi_ok}",
+        (
+            f"near_support={near_support} "
+            f"(dist_pct={dist_to_support_pct:.1f}%, "
+            f"dist_atr={dist_to_support_abs / atr:.2f}x)"
+        ) if atr > 0 else (
+            f"near_support={near_support} (dist_pct={dist_to_support_pct:.1f}%)"
+        ),
+        (
+            f"volume_ratio={volume_ratio:.2f} "
+            f"volume_declining={volume_declining} "
+            f"obv_trend={obv_trend}"
+        ),
+    ]
+    if reversal_candles:
+        best = reversal_candles[0]
+        reasons.append(
+            f"reversal_candle={best['pattern']} "
+            f"bars_ago={best['bars_ago']} strength={best['strength']}"
+        )
+    else:
+        reasons.append("reversal_candle=none in last 5 bars")
+    reasons.append(
+        "trigger: "
+        f"ok={trigger_ok} price_trigger={price_trigger} "
+        f"volume_ok={trigger_volume_ok} bar_strength_ok={trigger_bar_strength_ok} "
+        f"(close={price:.2f} vs trigger_price={trigger_price:.2f}, "
+        f"points={trigger_points} label={trigger_label})"
+    )
+
+    return {
+        "setup_type": "pullback_in_uptrend",
+        "verdict": verdict,
+        "setup_score": score,
+        "weekly_trend_warning": weekly_trend_warning,
+        "conditions": {
+            "uptrend_confirmed": uptrend_confirmed,
+            "weekly_trend_aligned": weekly_trend_aligned,
+            "adx": adx_val,
+            "adx_strong": adx_strong,
+            "rsi": round(rsi, 2),
+            "rsi_cooldown": rsi_cooldown,
+            "rsi_pullback_label": rsi_label,
+            "pullback_rsi_ok": rsi_ok,
+            "near_support": near_support,
+            "near_resistance": near_resistance,
+            "volume_ratio": volume_ratio,
+            "volume_declining": volume_declining,
+            "obv_trend": obv_trend,
+            "reversal_candle": {
+                "found": reversal_found,
+                "patterns": reversal_candles,
+            },
+            "trigger_ok": trigger_ok,
+            "trigger_price": trigger_price,
+            "trigger_volume_ok": trigger_volume_ok,
+            "trigger_bar_strength_ok": trigger_bar_strength_ok,
+            "trigger_points": trigger_points,
+            "trigger_label": trigger_label,
+        },
+        "levels": {
+            "nearest_support": nearest_support,
+            "nearest_resistance": nearest_resistance,
+            "sr_alignment": sr_alignment,
+        },
+        "risk": {
+            "atr14": round(atr, 2),
+            "entry_zone": {"low": entry_zone_low, "high": entry_zone_high},
+            "stop_loss": stop_loss,
+            "target": target,
+            "rr_to_resistance": rr_to_resistance,
+        },
+        "reasons": reasons,
+    }
+
+
+def analyze_ticker(
+    df: pd.DataFrame,
+    symbol: str,
+    price: float,
+    weekly_price_list: list[dict] | None = None,
+) -> dict:
     """Orchestrator: compute all signals and return full analysis dict."""
-    if len(df) < 50:
-        raise ValueError(f"Insufficient data for {symbol}: need at least 50 bars, got {len(df)}")
+    # 200 bars is the hard minimum: SMA-200 requires exactly 200 points, and the
+    # BB-squeeze check (compute_volatility_signals) compares the current BB width
+    # against its 120-day range, which itself sits on top of a 20-bar BB window.
+    # Feeding fewer bars would silently produce None/NaN for those signals.
+    if len(df) < 200:
+        raise ValueError(f"Insufficient data for {symbol}: need at least 200 bars, got {len(df)}")
 
     trend = compute_trend_signals(df)
     momentum = compute_momentum_signals(df)
@@ -365,6 +959,23 @@ def analyze_ticker(df: pd.DataFrame, symbol: str, price: float) -> dict:
     volume = compute_volume_signals(df)
     sr = compute_support_resistance(df)
     candlestick = compute_candlestick_patterns(df, sr)
+
+    # Weekly trend — best-effort; falls back to neutral if data is missing
+    weekly_trend: dict = _NEUTRAL_WEEKLY_TREND.copy()
+    try:
+        if weekly_price_list:
+            weekly_df = _prepare_dataframe(weekly_price_list)
+            weekly_trend = compute_weekly_trend(weekly_df)
+    except Exception:
+        pass  # keep neutral default
+
+    swing_setup = None
+    try:
+        swing_setup = compute_swing_setup_pullback(
+            df, trend, momentum, volatility, volume, sr, weekly_trend
+        )
+    except Exception:
+        pass  # swing_setup stays None; never breaks the rest of the analysis
 
     return {
         "ticker": symbol,
@@ -375,4 +986,6 @@ def analyze_ticker(df: pd.DataFrame, symbol: str, price: float) -> dict:
         "volume": volume,
         "support_resistance": sr,
         "candlestick": candlestick,
+        "swing_setup": swing_setup,
+        "weekly_trend": weekly_trend,
     }

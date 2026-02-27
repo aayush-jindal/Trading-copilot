@@ -5,7 +5,7 @@ from pydantic import BaseModel
 
 from app.database import get_db
 from app.dependencies import get_current_user
-from app.services.market_data import get_or_refresh_data
+from app.services.market_data import get_or_refresh_data, get_weekly_prices
 from app.services.ta_engine import analyze_ticker, _prepare_dataframe
 
 router = APIRouter(prefix="/watchlist", tags=["watchlist"])
@@ -62,8 +62,9 @@ def get_watchlist_dashboard(user: dict = Depends(get_current_user)):
             day_change     = last - prev
             day_change_pct = (day_change / prev * 100) if prev else None
 
+            weekly_price_list = get_weekly_prices(symbol)
             df = _prepare_dataframe(price_list)
-            analysis = analyze_ticker(df, symbol, last)
+            analysis = analyze_ticker(df, symbol, last, weekly_price_list)
             trend_signal = analysis["trend"]["signal"]
         except Exception:
             last = day_change = day_change_pct = trend_signal = None

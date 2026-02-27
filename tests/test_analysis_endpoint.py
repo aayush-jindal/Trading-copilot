@@ -26,13 +26,31 @@ class TestAnalyzeEndpoint:
         data = response.json()
         for key in ["ticker", "price", "trend", "momentum", "volatility", "volume", "support_resistance", "candlestick"]:
             assert key in data
+        # swing_setup is optional — must be present (may be null)
+        assert "swing_setup" in data
 
     @patch("app.routers.analysis.get_or_refresh_data")
     def test_response_validates_against_model(self, mock_get, authed_client, mock_price_data):
         mock_get.return_value = mock_price_data
         response = authed_client.get("/analyze/TEST")
         assert response.status_code == 200
+        # Validates all fields including the new optional swing_setup
         AnalysisResponse(**response.json())
+
+    @patch("app.routers.analysis.get_or_refresh_data")
+    def test_swing_setup_field_present(self, mock_get, authed_client, mock_price_data):
+        """swing_setup key must exist in response; value is dict or null."""
+        mock_get.return_value = mock_price_data
+        response = authed_client.get("/analyze/TEST")
+        assert response.status_code == 200
+        data = response.json()
+        assert "swing_setup" in data
+        swing = data["swing_setup"]
+        if swing is not None:
+            assert swing["setup_type"] == "pullback_in_uptrend"
+            assert swing["verdict"] in ("ENTRY", "WATCH", "NO_TRADE")
+            assert isinstance(swing["setup_score"], int)
+            assert 0 <= swing["setup_score"] <= 100
 
     @patch("app.routers.analysis.get_or_refresh_data")
     def test_404_for_invalid_ticker(self, mock_get, authed_client):

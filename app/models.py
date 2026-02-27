@@ -79,17 +79,34 @@ class VolumeSignals(BaseModel):
     obv_trend: str
 
 
+class WeeklyTrend(BaseModel):
+    weekly_trend: str                       # "BULLISH" | "BEARISH" | "NEUTRAL"
+    weekly_sma10: float | None = None
+    weekly_sma40: float | None = None
+    price_vs_weekly_sma10: str
+    price_vs_weekly_sma40: str
+    weekly_sma10_vs_sma40: str
+    weekly_trend_strength: str              # "STRONG" | "MODERATE" | "WEAK"
+
+
+class SwingLevel(BaseModel):
+    price: float
+    strength: str  # "HIGH" | "MEDIUM" | "LOW"
+
+
 class SupportResistance(BaseModel):
     high_52w: float
     low_52w: float
     distance_from_52w_high_pct: float
     distance_from_52w_low_pct: float
-    swing_highs: list[float]
-    swing_lows: list[float]
+    swing_highs: list[SwingLevel]
+    swing_lows: list[SwingLevel]
     nearest_resistance: float
     nearest_support: float
     distance_to_resistance_pct: float
     distance_to_support_pct: float
+    support_strength: str       # "HIGH" | "MEDIUM" | "LOW"
+    resistance_strength: str    # "HIGH" | "MEDIUM" | "LOW"
 
 
 class CandlestickSignals(BaseModel):
@@ -98,6 +115,66 @@ class CandlestickSignals(BaseModel):
     at_support: bool
     at_resistance: bool
     significance: str
+
+
+class ReversalCandle(BaseModel):
+    pattern: str
+    bars_ago: int
+    raw_value: int
+    strength: str  # "normal" | "strong"
+
+
+class ReversalCandleCondition(BaseModel):
+    found: bool
+    patterns: list[ReversalCandle]
+
+
+class SwingConditions(BaseModel):
+    uptrend_confirmed: bool
+    weekly_trend_aligned: bool = False
+    adx: float
+    adx_strong: bool
+    rsi: float
+    rsi_cooldown: float = 0.0
+    rsi_pullback_label: str = "no_pullback"
+    pullback_rsi_ok: bool
+    near_support: bool
+    near_resistance: bool
+    volume_ratio: float
+    volume_declining: bool
+    obv_trend: str
+    reversal_candle: ReversalCandleCondition
+    trigger_ok: bool
+
+
+class SwingLevels(BaseModel):
+    nearest_support: float
+    nearest_resistance: float
+    sr_alignment: str  # "aligned" | "misaligned" | "neutral"
+
+
+class EntryZone(BaseModel):
+    low: float
+    high: float
+
+
+class SwingRisk(BaseModel):
+    atr14: float
+    entry_zone: EntryZone
+    stop_loss: float
+    target: float
+    rr_to_resistance: float | None = None
+
+
+class SwingSetup(BaseModel):
+    setup_type: str
+    verdict: str  # "ENTRY" | "WATCH" | "NO_TRADE"
+    setup_score: int
+    weekly_trend_warning: str | None = None
+    conditions: SwingConditions
+    levels: SwingLevels
+    risk: SwingRisk
+    reasons: list[str]
 
 
 class AnalysisResponse(BaseModel):
@@ -109,3 +186,5 @@ class AnalysisResponse(BaseModel):
     volume: VolumeSignals
     support_resistance: SupportResistance
     candlestick: list[CandlestickSignals]
+    swing_setup: SwingSetup | None = None
+    weekly_trend: WeeklyTrend | None = None

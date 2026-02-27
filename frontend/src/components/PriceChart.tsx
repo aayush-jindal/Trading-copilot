@@ -143,6 +143,7 @@ function useChartInstance(
   containerRef: React.RefObject<HTMLDivElement>,
   prices: PriceBar[],
   ind: IndicatorState,
+  days: number,
 ) {
   const chartRef      = useRef<IChartApi | null>(null)
   const candleRef     = useRef<ISeriesApi<'Candlestick'> | null>(null)
@@ -232,8 +233,21 @@ function useChartInstance(
         })))
       }
     }
-    chartRef.current.timeScale().fitContent()
-  }, [prices, ind])
+
+    // Show only the user-selected window. `prices` may contain extra bars
+    // fetched as SMA warmup, so we set the viewport to the last `days` bars
+    // rather than calling fitContent() which would show all history.
+    if (days > 0 && prices.length > days) {
+      const fromBar = prices[prices.length - days]
+      const toBar   = prices[prices.length - 1]
+      chartRef.current.timeScale().setVisibleRange({
+        from: toTime(fromBar.date),
+        to:   toTime(toBar.date),
+      })
+    } else {
+      chartRef.current.timeScale().fitContent()
+    }
+  }, [prices, ind, days])
 
   // RSI lifecycle
   useEffect(() => {
@@ -404,7 +418,7 @@ function ChartModal({
   ticker?: string
 }) {
   const mainRef = useRef<HTMLDivElement>(null)
-  const { rsiContRef, macdContRef } = useChartInstance(mainRef, prices, ind)
+  const { rsiContRef, macdContRef } = useChartInstance(mainRef, prices, ind, days)
 
   // Escape key + scroll lock
   useEffect(() => {
@@ -502,7 +516,7 @@ export default function PriceChart({ prices, days, onDaysChange, ticker }: Price
     setInd(prev => ({ ...prev, [key]: !prev[key] }))
 
   const mainRef = useRef<HTMLDivElement>(null)
-  const { rsiContRef, macdContRef } = useChartInstance(mainRef, prices, ind)
+  const { rsiContRef, macdContRef } = useChartInstance(mainRef, prices, ind, days)
 
   const expandBtn = (
     <button

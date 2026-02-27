@@ -105,6 +105,76 @@ def _fetch_once(symbol: str) -> None:
     conn.commit()
     conn.close()
 
+    # Weekly data is best-effort — a failure here must not break the daily fetch
+    try:
+        _upsert_weekly_data(symbol, ticker)
+    except Exception:
+        pass
+
+
+def _upsert_weekly_data(symbol: str, ticker) -> None:
+    """Fetch 2 years of weekly OHLCV and upsert into weekly_price_history."""
+    hist = ticker.history(period="2y", interval="1wk")
+    if hist.empty:
+        return
+
+    rows = []
+    for date, row in hist.iterrows():
+        rows.append((
+            symbol,
+            date.strftime("%Y-%m-%d"),
+            float(row["Open"]),
+            float(row["High"]),
+            float(row["Low"]),
+            float(row["Close"]),
+            float(row.get("Adj Close", row["Close"])),
+            int(row["Volume"]),
+        ))
+
+    conn = get_db()
+    conn.executemany(
+        """INSERT INTO weekly_price_history (ticker_symbol, date, open, high, low, close, adj_close, volume)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+           ON CONFLICT (ticker_symbol, date) DO UPDATE SET
+             open      = EXCLUDED.open,
+             high      = EXCLUDED.high,
+             low       = EXCLUDED.low,
+             close     = EXCLUDED.close,
+             adj_close = EXCLUDED.adj_close,
+             volume    = EXCLUDED.volume""",
+        rows,
+    )
+    conn.commit()
+    conn.close()
+
+
+def fetch_weekly_data(symbol: str) -> None:
+    """Publicly callable: fetch and store 2 years of weekly OHLCV for symbol."""
+    ticker = yf.Ticker(symbol)
+    _upsert_weekly_data(symbol, ticker)
+
+
+def get_weekly_prices(symbol: str) -> list[dict]:
+    """Return cached weekly OHLCV rows for symbol, ordered oldest-first."""
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT * FROM weekly_price_history WHERE ticker_symbol = %s ORDER BY date",
+        (symbol,),
+    ).fetchall()
+    conn.close()
+    return [
+        {
+            "date": r["date"],
+            "open": r["open"],
+            "high": r["high"],
+            "low": r["low"],
+            "close": r["close"],
+            "adj_close": r["adj_close"],
+            "volume": r["volume"],
+        }
+        for r in rows
+    ]
+
 
 def get_or_refresh_data(symbol: str) -> tuple[dict, list[dict], str]:
     symbol = symbol.upper()
