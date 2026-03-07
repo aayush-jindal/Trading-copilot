@@ -1,6 +1,6 @@
 services:
   db:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     environment:
       POSTGRES_DB: trading_copilot
       POSTGRES_USER: postgres
@@ -23,8 +23,11 @@ services:
       - "8000:8000"
     volumes:
       - ../app:/app/app
+      - ../tools:/app/tools
+      - ../resources:/app/resources
       - ../tests:/app/tests
       - ../requirements.txt:/app/requirements.txt
+      - hf_cache:/root/.cache/huggingface
     environment:
       - PYTHONDONTWRITEBYTECODE=1
       - PYTHONUNBUFFERED=1
@@ -56,3 +59,4 @@ services:
 
 volumes:
   pg_data:
+  hf_cache:
