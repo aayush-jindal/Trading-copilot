@@ -225,6 +225,22 @@ def init_db() -> None:
         "CREATE INDEX IF NOT EXISTS idx_hourly_symbol_ts ON hourly_price_history(symbol, timestamp DESC)"
     )
 
+    # pgvector extension — requires pgvector/pgvector:pg16 Docker image
+    conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS knowledge_chunks (
+            id          SERIAL PRIMARY KEY,
+            source_file TEXT NOT NULL,
+            page_num    INT,
+            chunk_idx   INT NOT NULL,
+            content     TEXT NOT NULL,
+            embedding   vector(1536),
+            created_at  TEXT NOT NULL,
+            UNIQUE (source_file, chunk_idx)
+        )
+    """)
+
     conn.commit()
     conn.close()
 
