@@ -137,6 +137,19 @@ export function streamNarrative(
   }
 }
 
+export async function fetchKnowledgeStrategies(
+  ticker: string
+): Promise<{ ticker: string; strategies: string }> {
+  const res = await apiFetch(`/api/analyze/${encodeURIComponent(ticker)}/knowledge-strategies`)
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({}))
+    throw new Error(
+      (detail as { detail?: string })?.detail ?? `Knowledge strategies unavailable (${res.status})`
+    )
+  }
+  return res.json()
+}
+
 // ── Watchlist ─────────────────────────────────────────────────────────────────
 
 export async function getWatchlist(): Promise<WatchlistItem[]> {

@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   addToWatchlist,
   fetchAnalysis,
+  fetchKnowledgeStrategies,
   fetchPrices,
   getNotifications,
   getWatchlist,
@@ -16,6 +17,7 @@ import PriceChart from '../components/PriceChart'
 import SignalPanel from '../components/SignalPanel'
 import SwingSetupPanel from '../components/SwingSetupPanel'
 import NarrativePanel from '../components/NarrativePanel'
+import BookStrategiesPanel from '../components/BookStrategiesPanel'
 import TickerCard from '../components/TickerCard'
 import LoadingSkeleton from '../components/LoadingSkeleton'
 import { useAuth } from '../context/AuthContext'
@@ -50,9 +52,12 @@ export default function AnalysisPage() {
   const [prices, setPrices]               = useState<PriceBar[]>([])
   const [analysis, setAnalysis]           = useState<AnalysisResponse | null>(null)
   const [narrative, setNarrative]         = useState('')
-  const [isLoading, setIsLoading]         = useState(false)
-  const [isStreaming, setIsStreaming]      = useState(false)
-  const [error, setError]                 = useState<string | null>(null)
+  const [isLoading, setIsLoading]               = useState(false)
+  const [isStreaming, setIsStreaming]            = useState(false)
+  const [error, setError]                       = useState<string | null>(null)
+  const [bookStrategies, setBookStrategies]     = useState<string | null>(null)
+  const [isLoadingBook, setIsLoadingBook]       = useState(false)
+  const [bookError, setBookError]               = useState<string | null>(null)
   const [history, setHistory]             = useState<string[]>(loadHistory)
   const [days, setDays]                   = useState(DEFAULT_DAYS)
 
@@ -111,6 +116,9 @@ export default function AnalysisPage() {
     setError(null)
     setIsLoading(true)
     setIsStreaming(false)
+    setBookStrategies(null)
+    setBookError(null)
+    setIsLoadingBook(true)
 
     try {
       const [priceRes, analysisRes] = await Promise.all([
@@ -124,10 +132,17 @@ export default function AnalysisPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load data')
       setIsLoading(false)
+      setIsLoadingBook(false)
       return
     }
 
     setIsLoading(false)
+
+    // Fire book strategies fetch in background — does not block the main UI
+    fetchKnowledgeStrategies(ticker)
+      .then((res) => setBookStrategies(res.strategies))
+      .catch((err) => setBookError(err instanceof Error ? err.message : 'Failed to load book strategies'))
+      .finally(() => setIsLoadingBook(false))
     setIsStreaming(true)
 
     closeStreamRef.current = streamNarrative(
@@ -302,6 +317,17 @@ export default function AnalysisPage() {
             <div className="[animation-delay:150ms]">
               {(analysis || isStreaming || narrative) && (
                 <NarrativePanel narrative={narrative} isStreaming={isStreaming} />
+              )}
+            </div>
+
+            {/* Book Strategies */}
+            <div className="[animation-delay:175ms]">
+              {(isLoadingBook || bookStrategies || bookError) && (
+                <BookStrategiesPanel
+                  strategies={bookStrategies}
+                  isLoading={isLoadingBook}
+                  error={bookError}
+                />
               )}
             </div>
           </>

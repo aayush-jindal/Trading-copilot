@@ -27,7 +27,6 @@ services:
       - ../resources:/app/resources
       - ../tests:/app/tests
       - ../requirements.txt:/app/requirements.txt
-      - hf_cache:/root/.cache/huggingface
     environment:
       - PYTHONDONTWRITEBYTECODE=1
       - PYTHONUNBUFFERED=1
@@ -59,4 +58,3 @@ services:
 
 volumes:
   pg_data:
-  hf_cache:

@@ -44,3 +44,14 @@ def analyze(ticker: str):
         raise HTTPException(status_code=500, detail=f"Analysis error: {str(e)}")
 
     return result
+
+
+@router.get("/{ticker}/knowledge-strategies")
+def knowledge_strategies(ticker: str):
+    """RAG pipeline: live signals → book retrieval → Claude → grounded strategies."""
+    try:
+        from tools.knowledge_base.strategy_gen import generate_strategies  # lazy import
+        result = generate_strategies(ticker.upper())
+        return {"ticker": ticker.upper(), "strategies": result}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
