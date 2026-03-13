@@ -13,19 +13,9 @@ from .config import (
     CHUNK_SIZE,
     EMBED_DIMS,
     EMBED_MODEL,
+    OPENAI_API_KEY,
     RESOURCES_DIR,
 )
-
-_MODEL = None
-
-
-def _model():
-    """Lazy sentence-transformers model — downloaded once (~80 MB) then cached."""
-    global _MODEL
-    if _MODEL is None:
-        from sentence_transformers import SentenceTransformer  # noqa: PLC0415
-        _MODEL = SentenceTransformer(EMBED_MODEL)
-    return _MODEL
 
 
 # ── Chunking ──────────────────────────────────────────────────────────────────
@@ -48,9 +38,16 @@ def _chunk_text(text: str, size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP)
 # ── Embedding ─────────────────────────────────────────────────────────────────
 
 def _embed_texts(texts: list[str]) -> list[list[float]]:
-    """Embed a list of strings locally via sentence-transformers."""
-    embeddings = _model().encode(texts, batch_size=32, show_progress_bar=False)
-    return embeddings.tolist()
+    """Embed a list of strings via OpenAI text-embedding-3-small (batches of 100)."""
+    from openai import OpenAI  # noqa: PLC0415
+    client = OpenAI(api_key=OPENAI_API_KEY)
+    results: list[list[float]] = []
+    batch_size = 100
+    for i in range(0, len(texts), batch_size):
+        batch = texts[i : i + batch_size]
+        response = client.embeddings.create(model=EMBED_MODEL, input=batch)
+        results.extend(item.embedding for item in response.data)
+    return results
 
 
 # ── Database upsert ───────────────────────────────────────────────────────────

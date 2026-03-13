@@ -131,7 +131,7 @@ def init_db() -> None:
             page_num    INT,
             chunk_idx   INT NOT NULL,
             content     TEXT NOT NULL,
-            embedding   vector(384),
+            embedding   vector(1536),
             created_at  TEXT NOT NULL,
             UNIQUE (source_file, chunk_idx)
         )

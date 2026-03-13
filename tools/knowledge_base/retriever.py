@@ -2,18 +2,7 @@
 
 from __future__ import annotations
 
-from .config import EMBED_MODEL, TOP_K_RETRIEVAL
-
-_MODEL = None
-
-
-def _model():
-    """Lazy sentence-transformers model — same instance as pdf_ingester (process-level singleton)."""
-    global _MODEL
-    if _MODEL is None:
-        from sentence_transformers import SentenceTransformer  # noqa: PLC0415
-        _MODEL = SentenceTransformer(EMBED_MODEL)
-    return _MODEL
+from .config import EMBED_MODEL, OPENAI_API_KEY, TOP_K_RETRIEVAL
 
 
 # ── Query builder ─────────────────────────────────────────────────────────────
@@ -110,7 +99,11 @@ def build_signal_query(signals: dict) -> str:
 # ── Embedding + retrieval ─────────────────────────────────────────────────────
 
 def _embed_query(query: str) -> list[float]:
-    return _model().encode([query])[0].tolist()
+    """Embed a single query string via OpenAI text-embedding-3-small."""
+    from openai import OpenAI  # noqa: PLC0415
+    client = OpenAI(api_key=OPENAI_API_KEY)
+    response = client.embeddings.create(model=EMBED_MODEL, input=[query])
+    return response.data[0].embedding
 
 
 def _vec_str(embedding: list[float]) -> str:
