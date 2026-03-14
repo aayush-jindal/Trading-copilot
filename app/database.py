@@ -121,6 +121,110 @@ def init_db() -> None:
         )
     """)
 
+    # Backtesting player: runs and signals (isolated from main copilot)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS backtest_runs (
+            id                      SERIAL PRIMARY KEY,
+            run_id                  UUID NOT NULL UNIQUE,
+            ticker                  VARCHAR(10) NOT NULL,
+            run_label               VARCHAR(100) NOT NULL,
+            lookback_years          INTEGER NOT NULL,
+            entry_score_threshold   INTEGER NOT NULL,
+            watch_score_threshold   INTEGER NOT NULL,
+            min_rr_ratio            NUMERIC(4,2) NOT NULL,
+            min_support_strength    VARCHAR(10) NOT NULL,
+            require_weekly_aligned  BOOLEAN NOT NULL,
+            status                  VARCHAR(20) NOT NULL,
+            total_signals           INTEGER,
+            entry_signals           INTEGER,
+            watch_signals           INTEGER,
+            win_count               INTEGER,
+            loss_count              INTEGER,
+            expired_count           INTEGER,
+            win_rate                NUMERIC(5,2),
+            expected_value          NUMERIC(8,4),
+            avg_return_pct          NUMERIC(8,4),
+            avg_mae                 NUMERIC(8,4),
+            avg_mfe                 NUMERIC(8,4),
+            avg_days_to_outcome     NUMERIC(6,2),
+            expired_pct             NUMERIC(5,2),
+            created_at              TIMESTAMP DEFAULT NOW(),
+            completed_at            TIMESTAMP
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS backtest_signals (
+            id                      SERIAL PRIMARY KEY,
+            run_id                  UUID NOT NULL REFERENCES backtest_runs(run_id) ON DELETE CASCADE,
+            ticker                  VARCHAR(10) NOT NULL,
+            signal_date             DATE NOT NULL,
+            verdict                 VARCHAR(10) NOT NULL,
+            setup_score             INTEGER NOT NULL,
+            score_decile            INTEGER NOT NULL,
+            uptrend_confirmed       BOOLEAN NOT NULL,
+            weekly_trend_aligned    BOOLEAN NOT NULL,
+            near_support            BOOLEAN NOT NULL,
+            support_strength        VARCHAR(10),
+            reversal_found          BOOLEAN NOT NULL,
+            trigger_ok              BOOLEAN NOT NULL,
+            rr_ratio                NUMERIC(6,2),
+            rr_label                VARCHAR(20),
+            support_is_provisional  BOOLEAN NOT NULL,
+            entry_price             NUMERIC(10,2) NOT NULL,
+            stop_loss               NUMERIC(10,2),
+            target                 NUMERIC(10,2),
+            outcome                 VARCHAR(10),
+            outcome_date            DATE,
+            days_to_outcome         INTEGER,
+            exit_price              NUMERIC(10,2),
+            return_pct              NUMERIC(8,4),
+            mae                     NUMERIC(8,4),
+            mfe                     NUMERIC(8,4),
+            created_at              TIMESTAMP DEFAULT NOW()
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_signals_run_id ON backtest_signals(run_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_signals_verdict ON backtest_signals(verdict)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_signals_outcome ON backtest_signals(outcome)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_ticker ON backtest_runs(ticker)")
+
+    # win_rate split columns on backtest_runs — added after initial release; idempotent
+    conn.execute("ALTER TABLE backtest_runs ADD COLUMN IF NOT EXISTS win_rate_entry NUMERIC(5,2)")
+    conn.execute("ALTER TABLE backtest_runs ADD COLUMN IF NOT EXISTS win_rate_watch NUMERIC(5,2)")
+    conn.execute("ALTER TABLE backtest_runs ADD COLUMN IF NOT EXISTS win_rate_all   NUMERIC(5,2)")
+
+    # P&L columns on backtest_runs — added after initial release; idempotent
+    conn.execute("ALTER TABLE backtest_runs ADD COLUMN IF NOT EXISTS entry_signal_count INTEGER DEFAULT 0")
+    conn.execute("ALTER TABLE backtest_runs ADD COLUMN IF NOT EXISTS fixed_pnl          NUMERIC(10,2) DEFAULT 0")
+    conn.execute("ALTER TABLE backtest_runs ADD COLUMN IF NOT EXISTS compound_pnl       NUMERIC(10,2) DEFAULT 0")
+    conn.execute("ALTER TABLE backtest_runs ADD COLUMN IF NOT EXISTS compound_final_pot NUMERIC(10,2) DEFAULT 1000")
+
+    # 4H columns on backtest_signals — added after initial release; idempotent
+    conn.execute("ALTER TABLE backtest_signals ADD COLUMN IF NOT EXISTS four_h_available BOOLEAN DEFAULT FALSE")
+    conn.execute("ALTER TABLE backtest_signals ADD COLUMN IF NOT EXISTS four_h_confirmed BOOLEAN DEFAULT FALSE")
+    conn.execute("ALTER TABLE backtest_signals ADD COLUMN IF NOT EXISTS four_h_reversal  BOOLEAN DEFAULT FALSE")
+    conn.execute("ALTER TABLE backtest_signals ADD COLUMN IF NOT EXISTS four_h_trigger   BOOLEAN DEFAULT FALSE")
+    conn.execute("ALTER TABLE backtest_signals ADD COLUMN IF NOT EXISTS four_h_rsi       NUMERIC(6,2)")
+    conn.execute("ALTER TABLE backtest_signals ADD COLUMN IF NOT EXISTS four_h_upgrade   BOOLEAN DEFAULT FALSE")
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS hourly_price_history (
+            id          SERIAL PRIMARY KEY,
+            symbol      VARCHAR(10) NOT NULL,
+            timestamp   TIMESTAMP NOT NULL,
+            open        NUMERIC(12,4) NOT NULL,
+            high        NUMERIC(12,4) NOT NULL,
+            low         NUMERIC(12,4) NOT NULL,
+            close       NUMERIC(12,4) NOT NULL,
+            volume      BIGINT NOT NULL,
+            created_at  TIMESTAMP DEFAULT NOW(),
+            UNIQUE(symbol, timestamp)
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_hourly_symbol_ts ON hourly_price_history(symbol, timestamp DESC)"
+    )
+
     conn.commit()
     conn.close()
 

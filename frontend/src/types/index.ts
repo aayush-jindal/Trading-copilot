@@ -101,6 +101,10 @@ export interface SupportResistance {
   distance_to_support_pct: number
   support_strength: string    // "HIGH" | "MEDIUM" | "LOW"
   resistance_strength: string // "HIGH" | "MEDIUM" | "LOW"
+  support_is_provisional: boolean
+  resistance_is_provisional: boolean
+  provisional_support: number | null
+  provisional_resistance: number | null
 }
 
 export interface CandlestickSignal {
@@ -144,12 +148,18 @@ export interface SwingConditions {
   trigger_bar_strength_ok: boolean
   trigger_points: number
   trigger_label: 'strong' | 'moderate' | 'weak' | 'not_fired'
+  rr_ratio: number | null
+  rr_label: 'good' | 'marginal' | 'poor' | 'bad' | 'unavailable'
+  rr_gate_pass: boolean
+  rr_warning: string | null
 }
 
 export interface SwingLevels {
   nearest_support: number
   nearest_resistance: number
   sr_alignment: string
+  support_is_provisional: boolean
+  resistance_is_provisional: boolean
 }
 
 export interface EntryZone {
@@ -162,6 +172,7 @@ export interface SwingRisk {
   entry_zone: EntryZone
   stop_loss: number
   target: number
+  rr_ratio: number | null
   rr_to_resistance: number | null
 }
 

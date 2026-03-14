@@ -22,7 +22,11 @@ def mock_ohlcv_df():
 
     def _make(days=300, start_price=100.0, trend="flat", volatility=0.02):
         np.random.seed(42)
-        dates = pd.date_range(end=pd.Timestamp.today().normalize(), periods=days, freq="B")
+        # Roll back to the last business day so date_range always produces
+        # exactly `days` entries regardless of the current weekday (pandas 3.x
+        # returns N-1 entries when `end` is a non-business day).
+        _end = pd.offsets.BDay().rollback(pd.Timestamp.today().normalize())
+        dates = pd.date_range(end=_end, periods=days, freq="B")
         n = len(dates)
 
         # Random walk with trend bias

@@ -18,6 +18,16 @@ _NEUTRAL_WEEKLY_TREND: dict = {
     "weekly_trend_strength": "WEAK",
 }
 
+_NEUTRAL_4H: dict = {
+    "four_h_reversal":      False,
+    "four_h_trigger":       False,
+    "four_h_rsi":           0.0,
+    "four_h_rsi_ok":        False,
+    "four_h_confirmed":     False,
+    "four_h_available":     False,
+    "four_h_reversal_name": None,
+}
+
 
 def _prepare_dataframe(price_list: list[dict]) -> pd.DataFrame:
     """Convert list[dict] from DB → DataFrame with DatetimeIndex."""
@@ -279,6 +289,71 @@ def compute_volume_signals(df: pd.DataFrame) -> dict:
     }
 
 
+def _get_provisional_levels(
+    df: pd.DataFrame,
+    current_price: float,
+    n_bars: int = 7,
+    max_distance_pct: float = 8.0,
+) -> dict:
+    """
+    Derives provisional support/resistance from the recent n_bars window.
+    These levels are structurally unconfirmed (argrelextrema has not yet
+    validated them) but are meaningful for fresh pullback detection.
+
+    Returns a dict with:
+        provisional_support:    float | None
+        provisional_resistance: float | None
+        provisional_support_distance_pct:    float | None
+        provisional_resistance_distance_pct: float | None
+    """
+    if len(df) <= 1:
+        return {
+            "provisional_support": None,
+            "provisional_resistance": None,
+            "provisional_support_distance_pct": None,
+            "provisional_resistance_distance_pct": None,
+        }
+
+    recent = df.iloc[-(n_bars + 1):-1]  # exclude today's bar
+    if recent.empty:
+        return {
+            "provisional_support": None,
+            "provisional_resistance": None,
+            "provisional_support_distance_pct": None,
+            "provisional_resistance_distance_pct": None,
+        }
+
+    raw_low = float(recent["low"].min())
+    raw_high = float(recent["high"].max())
+
+    prov_support = round(raw_low, 2) if raw_low < current_price else None
+    prov_resistance = round(raw_high, 2) if raw_high > current_price else None
+
+    support_dist = (
+        round((current_price - prov_support) / current_price * 100, 2)
+        if prov_support is not None else None
+    )
+    resistance_dist = (
+        round((prov_resistance - current_price) / current_price * 100, 2)
+        if prov_resistance is not None else None
+    )
+
+    # Discard if too far from price — likely not a fresh level
+    if support_dist is not None and support_dist > max_distance_pct:
+        prov_support = None
+        support_dist = None
+    if resistance_dist is not None and resistance_dist > max_distance_pct:
+        prov_resistance = None
+        resistance_dist = None
+
+    return {
+        "provisional_support": prov_support,
+        "provisional_resistance": prov_resistance,
+        "provisional_support_distance_pct": support_dist,
+        "provisional_resistance_distance_pct": resistance_dist,
+    }
+
+
 def compute_support_resistance(df: pd.DataFrame, swing_lookback: int = 90) -> dict:
     """Multi-window clustered S/R with touch-count significance scoring.
 
@@ -390,14 +465,14 @@ def compute_support_resistance(df: pd.DataFrame, swing_lookback: int = 90) -> di
     nearest_resistance_val, resistance_strength = _pick_nearest(resistance_candidates, above=True)
     nearest_support_val, support_strength = _pick_nearest(support_candidates, above=False)
 
+    has_confirmed_resistance = nearest_resistance_val is not None
+    has_confirmed_support = nearest_support_val is not None
+
     # Fall back to 52w extremes when no swing points found
     if nearest_resistance_val is None:
         nearest_resistance_val, resistance_strength = high_52w, "LOW"
     if nearest_support_val is None:
         nearest_support_val, support_strength = low_52w, "LOW"
-
-    dist_to_resistance = round((nearest_resistance_val - price) / price * 100, 2)
-    dist_to_support = round((price - nearest_support_val) / price * 100, 2)
 
     # ── Step 5: Top-5 annotated level lists (nearest first) ──────────────────
     # swing_highs: resistance levels strictly above current price, nearest first.
@@ -423,6 +498,53 @@ def compute_support_resistance(df: pd.DataFrame, swing_lookback: int = 90) -> di
     swing_highs_out = [{"price": round(p, 2), "strength": s} for p, _, s in top_highs]
     swing_lows_out = [{"price": round(p, 2), "strength": s} for p, _, s in top_lows]
 
+    # ── Step 6: Provisional recency-based levels (fallback) ─────────────────────
+    provisional = _get_provisional_levels(df, price)
+
+    support_is_provisional = False
+    resistance_is_provisional = False
+
+    prov_support = provisional["provisional_support"]
+    prov_support_dist = provisional["provisional_support_distance_pct"]
+    prov_resistance = provisional["provisional_resistance"]
+    prov_resistance_dist = provisional["provisional_resistance_distance_pct"]
+
+    # Fallback: use provisional support if confirmed support is more than 3% away
+    # AND provisional is closer (or when no confirmed support exists).
+    if prov_support is not None and prov_support_dist is not None:
+        confirmed_support_dist = (
+            abs(price - nearest_support_val) / price * 100 if has_confirmed_support else None
+        )
+        use_provisional_support = False
+        if confirmed_support_dist is None:
+            use_provisional_support = True
+        elif confirmed_support_dist > 3.0 and prov_support_dist < confirmed_support_dist:
+            use_provisional_support = True
+
+        if use_provisional_support:
+            nearest_support_val = prov_support
+            support_strength = "LOW"
+            support_is_provisional = True
+
+    # Same logic for resistance
+    if prov_resistance is not None and prov_resistance_dist is not None:
+        confirmed_resistance_dist = (
+            abs(nearest_resistance_val - price) / price * 100 if has_confirmed_resistance else None
+        )
+        use_provisional_resistance = False
+        if confirmed_resistance_dist is None:
+            use_provisional_resistance = True
+        elif confirmed_resistance_dist > 3.0 and prov_resistance_dist < confirmed_resistance_dist:
+            use_provisional_resistance = True
+
+        if use_provisional_resistance:
+            nearest_resistance_val = prov_resistance
+            resistance_strength = "LOW"
+            resistance_is_provisional = True
+
+    dist_to_resistance = round((nearest_resistance_val - price) / price * 100, 2)
+    dist_to_support = round((price - nearest_support_val) / price * 100, 2)
+
     return {
         "high_52w": high_52w,
         "low_52w": low_52w,
@@ -436,6 +558,10 @@ def compute_support_resistance(df: pd.DataFrame, swing_lookback: int = 90) -> di
         "distance_to_support_pct": dist_to_support,
         "support_strength": support_strength,
         "resistance_strength": resistance_strength,
+        "support_is_provisional": support_is_provisional,
+        "resistance_is_provisional": resistance_is_provisional,
+        "provisional_support": provisional["provisional_support"],
+        "provisional_resistance": provisional["provisional_resistance"],
     }
 
 
@@ -635,6 +761,66 @@ def compute_weekly_trend(weekly_df: pd.DataFrame) -> dict:
     }
 
 
+def _classify_rr_ratio(rr_ratio: float | None, min_rr_ratio: float = 1.5) -> tuple[str, bool]:
+    """Classify R:R ratio into label + gate flag.
+
+    Returns (rr_label, rr_gate_pass). Uses min_rr_ratio for 'good' threshold
+    when provided (e.g. from backtest config).
+    """
+    if rr_ratio is None:
+        return "unavailable", True
+    if rr_ratio >= min_rr_ratio:
+        return "good", True
+    if rr_ratio >= 1.0:
+        return "marginal", True
+    if rr_ratio >= 0.5:
+        return "poor", False
+    return "bad", False
+
+
+def _apply_rr_gate(
+    verdict: str,
+    rr_ratio: float | None,
+    rr_label: str,
+    rr_gate_pass: bool,
+) -> tuple[str, str | None]:
+    """Apply the R:R hard gate on top of the primary verdict.
+
+    Returns (possibly_downgraded_verdict, rr_warning).
+    """
+    rr_warning: str | None = None
+
+    if verdict == "ENTRY" and rr_label in ("marginal",):
+        rr_warning = "R:R is marginal — consider waiting for a better entry point"
+
+    if verdict == "ENTRY" and not rr_gate_pass:
+        verdict = "WATCH"
+        rr_warning = (
+            f"R:R of {rr_ratio}:1 is too poor for entry — "
+            "resistance is too close or stop is too wide"
+        )
+
+    if rr_label == "bad":
+        verdict = "NO_TRADE"
+        rr_warning = (
+            f"R:R of {rr_ratio}:1 makes this setup unfavourable regardless of other conditions"
+        )
+
+    return verdict, rr_warning
+
+
+def _support_strength_rank(s: str) -> int:
+    """LOW=0, MEDIUM=1, HIGH=2 for min_support_strength filtering."""
+    return {"LOW": 0, "MEDIUM": 1, "HIGH": 2}.get((s or "").upper(), -1)
+
+
+def _support_strength_meets_minimum(strength: str | None, minimum: str | None) -> bool:
+    """Return True if *strength* meets or exceeds *minimum*, or if no minimum is configured."""
+    if not minimum:
+        return True
+    return _support_strength_rank(strength) >= _support_strength_rank(minimum)
+
+
 def compute_swing_setup_pullback(
     df: pd.DataFrame,
     trend: dict,
@@ -643,6 +829,12 @@ def compute_swing_setup_pullback(
     volume: dict,
     support_resistance: dict,
     weekly_trend: dict | None = None,
+    *,
+    entry_score_threshold: int = 70,
+    watch_score_threshold: int = 55,
+    min_rr_ratio: float = 1.5,
+    require_weekly_aligned: bool = True,
+    min_support_strength: str | None = None,
 ) -> dict:
     """Detect a bullish 'Pullback in Uptrend' daily swing setup.
 
@@ -654,9 +846,11 @@ def compute_swing_setup_pullback(
     # ── Weekly trend alignment (hard gate — no score impact) ─────────────────
     # If weekly_trend is None (no data / direct call from tests) treat as aligned
     # so existing tests and callers without weekly data are not penalised.
+    # When require_weekly_aligned is False, gate is disabled (treat as aligned).
     _wt = weekly_trend or {}
     weekly_trend_aligned: bool = (
-        weekly_trend is None
+        not require_weekly_aligned
+        or weekly_trend is None
         or _wt.get("weekly_trend") == "BULLISH"
     )
 
@@ -706,10 +900,19 @@ def compute_swing_setup_pullback(
     dist_to_support_pct: float = float(support_resistance.get("distance_to_support_pct") or 999.0)
     dist_to_resistance_pct: float = float(support_resistance.get("distance_to_resistance_pct") or 999.0)
 
+    support_is_provisional: bool = bool(support_resistance.get("support_is_provisional") or False)
+    resistance_is_provisional: bool = bool(support_resistance.get("resistance_is_provisional") or False)
+
     dist_to_support_abs: float = abs(price - nearest_support) if nearest_support > 0 else 999.0
     near_support_atr: bool = bool(atr > 0 and nearest_support > 0 and dist_to_support_abs <= 0.75 * atr)
     near_support_pct: bool = bool(nearest_support > 0 and dist_to_support_pct < 3.0)
-    near_support: bool = near_support_atr or near_support_pct
+    _near_support_raw: bool = near_support_atr or near_support_pct
+    # Apply min_support_strength filter: skip near_support if strength below minimum
+    support_strength_val: str = str(support_resistance.get("support_strength") or "LOW").upper()
+    if min_support_strength and _support_strength_rank(support_strength_val) < _support_strength_rank(min_support_strength.upper()):
+        near_support = False
+    else:
+        near_support = _near_support_raw
 
     dist_to_resistance_abs: float = abs(price - nearest_resistance) if nearest_resistance > 0 else 999.0
     near_resistance_atr: bool = bool(atr > 0 and nearest_resistance > 0 and dist_to_resistance_abs <= 0.75 * atr)
@@ -782,6 +985,17 @@ def compute_swing_setup_pullback(
     if nearest_resistance > 0 and price > stop_loss:
         rr_to_resistance = round((nearest_resistance - price) / (price - stop_loss), 2)
 
+    # R:R ratio w.r.t nearest support / resistance (independent of stop-loss logic)
+    if nearest_support and nearest_resistance and price > nearest_support:
+        rr_ratio: float | None = round(
+            (nearest_resistance - price) / (price - nearest_support),
+            2,
+        )
+    else:
+        rr_ratio = None
+
+    rr_label, rr_gate_pass = _classify_rr_ratio(rr_ratio, min_rr_ratio)
+
     # ── F) SR alignment ───────────────────────────────────────────────────────
     if near_support:
         sr_alignment = "aligned"
@@ -837,13 +1051,13 @@ def compute_swing_setup_pullback(
         and near_support
         and reversal_found
         and trigger_ok
-        and score >= 70
+        and score >= entry_score_threshold
     ):
         verdict = "ENTRY"
     elif (
         uptrend_confirmed
         and (near_support or rsi_ok)
-        and score >= 55
+        and score >= watch_score_threshold
     ):
         verdict = "WATCH"
     else:
@@ -854,6 +1068,9 @@ def compute_swing_setup_pullback(
     if not weekly_trend_aligned and verdict == "ENTRY":
         verdict = "WATCH"
         weekly_trend_warning = "Daily setup forming against weekly trend — reduced conviction"
+
+    # R:R gate applies after weekly trend gate
+    verdict, rr_warning = _apply_rr_gate(verdict, rr_ratio, rr_label, rr_gate_pass)
 
     # ── Reasons ───────────────────────────────────────────────────────────────
     reasons: list[str] = [
@@ -912,6 +1129,10 @@ def compute_swing_setup_pullback(
             "volume_ratio": volume_ratio,
             "volume_declining": volume_declining,
             "obv_trend": obv_trend,
+            "rr_ratio": rr_ratio,
+            "rr_label": rr_label,
+            "rr_gate_pass": rr_gate_pass,
+            "rr_warning": rr_warning,
             "reversal_candle": {
                 "found": reversal_found,
                 "patterns": reversal_candles,
@@ -927,16 +1148,112 @@ def compute_swing_setup_pullback(
             "nearest_support": nearest_support,
             "nearest_resistance": nearest_resistance,
             "sr_alignment": sr_alignment,
+            "support_is_provisional": support_is_provisional,
+            "resistance_is_provisional": resistance_is_provisional,
         },
         "risk": {
             "atr14": round(atr, 2),
             "entry_zone": {"low": entry_zone_low, "high": entry_zone_high},
             "stop_loss": stop_loss,
             "target": target,
+            "rr_ratio": rr_ratio,
             "rr_to_resistance": rr_to_resistance,
         },
         "reasons": reasons,
     }
+
+
+def _resample_to_4h(hourly_df: pd.DataFrame) -> pd.DataFrame:
+    """Resample 1H bars to 4H bars.
+
+    Bars are aggregated on 4-hour UTC boundaries (00:00, 04:00, 08:00 …).
+    Incomplete or all-NaN buckets are dropped via dropna().
+    """
+    if hourly_df is None or hourly_df.empty:
+        return pd.DataFrame()
+
+    df_4h = hourly_df.resample("4h").agg({
+        "open":   "first",
+        "high":   "max",
+        "low":    "min",
+        "close":  "last",
+        "volume": "sum",
+    }).dropna()
+
+    return df_4h
+
+
+def compute_4h_confirmation(hourly_df: pd.DataFrame) -> dict:
+    """Resample 1H → 4H and check three confirmation conditions.
+
+    Conditions:
+      1. Bullish reversal candle on the most recent completed 4H bar (bars_ago <= 1)
+      2. 4H trigger: close of most recent bar > highest high of the 3 bars before it
+      3. 4H RSI(14) > 40 on the most recent bar
+
+    Returns a dict with keys matching _NEUTRAL_4H.
+    Never raises — returns _NEUTRAL_4H on any exception.
+    """
+    if hourly_df is None or hourly_df.empty:
+        return _NEUTRAL_4H.copy()
+
+    try:
+        df_4h = _resample_to_4h(hourly_df)
+
+        # Need at least 20 bars for RSI + 4 bars for trigger lookback
+        if len(df_4h) < 20:
+            return _NEUTRAL_4H.copy()
+
+        # Exclude the currently forming (incomplete) bar — last bar may only
+        # have 1-2 hours of data, making its OHLC misleading.
+        df = df_4h.iloc[:-1].copy()
+
+        if len(df) < 15:
+            return _NEUTRAL_4H.copy()
+
+        # ── Condition 1: bullish reversal candle ─────────────────────────────
+        # Scan the last 3 completed 4H bars (≈12-16 market hours).
+        # bars_ago <= 2 covers all three bars of the wider scan window.
+        reversal_hits = _find_reversal_candles(df, scan_bars=3)
+        bullish_hits = [h for h in reversal_hits if h.get("bars_ago", 99) <= 2]
+        four_h_reversal = len(bullish_hits) > 0
+        four_h_reversal_name = bullish_hits[0]["pattern"] if bullish_hits else None
+
+        # ── Condition 2: 4H trigger (informational only) ──────────────────────
+        # Close of most recent completed bar > highest high of the 3 bars before it.
+        # Not required for four_h_confirmed — the trigger is a breakout signal that
+        # is structurally anti-correlated with the daily WATCH state (which is a
+        # pullback phase).  Retained here so callers can still read the field.
+        if len(df) < 4:
+            four_h_trigger = False
+        else:
+            recent_close   = float(df["close"].iloc[-1])
+            three_bar_high = float(df["high"].iloc[-4:-1].max())
+            four_h_trigger = recent_close > three_bar_high
+
+        # ── Condition 3: 4H RSI > 40 ─────────────────────────────────────────
+        rsi_series  = RSIIndicator(df["close"], window=14).rsi()
+        four_h_rsi  = round(float(rsi_series.iloc[-1]), 1) if pd.notna(rsi_series.iloc[-1]) else 0.0
+        four_h_rsi_ok = four_h_rsi > 40.0
+
+        # Confirmation = reversal + RSI only.  Trigger is recorded for
+        # transparency but intentionally excluded from the gate because requiring
+        # a 4H breakout (close > 3-bar high) is incompatible with the daily
+        # WATCH state (which by definition has not yet triggered a breakout).
+        four_h_confirmed = four_h_reversal and four_h_rsi_ok
+
+        return {
+            "four_h_reversal":      four_h_reversal,
+            "four_h_trigger":       four_h_trigger,
+            "four_h_rsi":           four_h_rsi,
+            "four_h_rsi_ok":        four_h_rsi_ok,
+            "four_h_confirmed":     four_h_confirmed,
+            "four_h_available":     True,
+            "four_h_reversal_name": four_h_reversal_name,
+        }
+
+    except Exception:
+        return _NEUTRAL_4H.copy()
 
 
 def analyze_ticker(
@@ -944,8 +1261,19 @@ def analyze_ticker(
     symbol: str,
     price: float,
     weekly_price_list: list[dict] | None = None,
+    *,
+    hourly_df: pd.DataFrame | None = None,
+    entry_score_threshold: int | None = None,
+    watch_score_threshold: int | None = None,
+    min_rr_ratio: float | None = None,
+    require_weekly_aligned: bool | None = None,
+    min_support_strength: str | None = None,
 ) -> dict:
-    """Orchestrator: compute all signals and return full analysis dict."""
+    """Orchestrator: compute all signals and return full analysis dict.
+
+    Optional threshold kwargs are used by the backtester; when omitted, defaults
+    (70, 55, 1.5, True, None) apply in compute_swing_setup_pullback.
+    """
     # 200 bars is the hard minimum: SMA-200 requires exactly 200 points, and the
     # BB-squeeze check (compute_volatility_signals) compares the current BB width
     # against its 120-day range, which itself sits on top of a 20-bar BB window.
@@ -971,11 +1299,42 @@ def analyze_ticker(
 
     swing_setup = None
     try:
+        kwargs: dict = {}
+        if entry_score_threshold is not None:
+            kwargs["entry_score_threshold"] = entry_score_threshold
+        if watch_score_threshold is not None:
+            kwargs["watch_score_threshold"] = watch_score_threshold
+        if min_rr_ratio is not None:
+            kwargs["min_rr_ratio"] = min_rr_ratio
+        if require_weekly_aligned is not None:
+            kwargs["require_weekly_aligned"] = require_weekly_aligned
+        if min_support_strength is not None:
+            kwargs["min_support_strength"] = min_support_strength
         swing_setup = compute_swing_setup_pullback(
-            df, trend, momentum, volatility, volume, sr, weekly_trend
+            df, trend, momentum, volatility, volume, sr, weekly_trend, **kwargs
         )
     except Exception:
         pass  # swing_setup stays None; never breaks the rest of the analysis
+
+    # ── 4H confirmation layer ─────────────────────────────────────────────────
+    # 4H can only upgrade WATCH → ENTRY; it never downgrades anything.
+    # ALL original risk-management gates must still pass — 4H only confirms
+    # timing and cannot override score, R:R, or support-strength thresholds.
+    four_h = compute_4h_confirmation(hourly_df)
+    four_h_upgrade = False
+    _entry_threshold = entry_score_threshold if entry_score_threshold is not None else 70
+    _min_rr        = min_rr_ratio        if min_rr_ratio        is not None else 1.5
+    _min_support   = min_support_strength if min_support_strength is not None else None
+    if swing_setup is not None and swing_setup.get("verdict") == "WATCH":
+        _conditions  = swing_setup.get("conditions", {})
+        score_ok     = int(swing_setup.get("setup_score") or 0) >= _entry_threshold
+        rr_ok        = (_conditions.get("rr_ratio") or 0) >= _min_rr
+        support_ok   = _support_strength_meets_minimum(
+                           _conditions.get("support_strength"), _min_support
+                       )
+        if four_h["four_h_confirmed"] and score_ok and rr_ok and support_ok:
+            swing_setup["verdict"] = "ENTRY"
+            four_h_upgrade = True
 
     return {
         "ticker": symbol,
@@ -988,4 +1347,6 @@ def analyze_ticker(
         "candlestick": candlestick,
         "swing_setup": swing_setup,
         "weekly_trend": weekly_trend,
+        "four_h_confirmation": four_h,
+        "four_h_upgrade": four_h_upgrade,
     }

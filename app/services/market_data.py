@@ -1,10 +1,16 @@
+import logging
 import time
 from datetime import datetime, timedelta, timezone
 
+import pandas as pd
 import yfinance as yf
 
 from app.config import HISTORY_PERIOD, STALENESS_HOURS
 from app.database import get_db
+
+logger = logging.getLogger(__name__)
+
+_HOURLY_STALENESS_HOURS = 2
 
 _RATE_LIMIT_RETRIES = 3
 _RATE_LIMIT_WAIT    = 8  # seconds between retries
@@ -222,3 +228,126 @@ def get_or_refresh_data(symbol: str) -> tuple[dict, list[dict], str]:
 def get_latest_prices(symbol: str, days: int = 30) -> tuple[dict, list[dict], str]:
     ticker_info, all_prices, source = get_or_refresh_data(symbol)
     return ticker_info, all_prices[-days:], source
+
+
+# ── Hourly data ───────────────────────────────────────────────────────────────
+
+def fetch_hourly_data(symbol: str) -> list[dict]:
+    """Fetch up to 730 days of 1H OHLCV bars for symbol via yfinance.
+
+    Returns list of dicts with keys: timestamp, open, high, low, close, volume.
+    yfinance only provides reliable 1H data for ~60 days; older bars are returned
+    on a best-effort basis. Returns empty list on any error.
+    """
+    try:
+        ticker = yf.Ticker(symbol)
+        df = ticker.history(period="730d", interval="1h")
+        if df.empty:
+            return []
+        if df.index.tz is None:
+            df.index = df.index.tz_localize("UTC")
+        else:
+            df.index = df.index.tz_convert("UTC")
+        result = []
+        for row in df.itertuples():
+            result.append({
+                "timestamp": row.Index.to_pydatetime(),
+                "open":   round(float(row.Open),   4),
+                "high":   round(float(row.High),   4),
+                "low":    round(float(row.Low),    4),
+                "close":  round(float(row.Close),  4),
+                "volume": int(row.Volume),
+            })
+        return result
+    except Exception as exc:
+        logger.warning("fetch_hourly_data(%s) failed: %s", symbol, exc)
+        return []
+
+
+def _upsert_hourly(symbol: str, rows: list[dict]) -> None:
+    """Upsert 1H bars into hourly_price_history. Best-effort — caller should catch."""
+    conn = get_db()
+    conn.executemany(
+        """INSERT INTO hourly_price_history
+               (symbol, timestamp, open, high, low, close, volume)
+           VALUES (%s, %s, %s, %s, %s, %s, %s)
+           ON CONFLICT (symbol, timestamp) DO UPDATE SET
+               open   = EXCLUDED.open,
+               high   = EXCLUDED.high,
+               low    = EXCLUDED.low,
+               close  = EXCLUDED.close,
+               volume = EXCLUDED.volume""",
+        [
+            (symbol, r["timestamp"], r["open"], r["high"], r["low"], r["close"], r["volume"])
+            for r in rows
+        ],
+    )
+    conn.commit()
+    conn.close()
+
+
+def _is_hourly_stale(last_timestamp: datetime) -> bool:
+    if last_timestamp.tzinfo is None:
+        last_timestamp = last_timestamp.replace(tzinfo=timezone.utc)
+    age = datetime.now(timezone.utc) - last_timestamp
+    return age > timedelta(hours=_HOURLY_STALENESS_HOURS)
+
+
+def get_or_refresh_hourly_data(symbol: str) -> pd.DataFrame:
+    """Return 1H bars as DataFrame with UTC DatetimeIndex.
+
+    Refreshes from yfinance when data is absent or older than 2 hours.
+    Returns empty DataFrame on any failure — never raises.
+    """
+    symbol = symbol.upper()
+    try:
+        conn = get_db()
+        rows = conn.execute(
+            """SELECT timestamp, open, high, low, close, volume
+               FROM hourly_price_history
+               WHERE symbol = %s
+               ORDER BY timestamp ASC""",
+            (symbol,),
+        ).fetchall()
+        conn.close()
+
+        needs_refresh = (
+            not rows
+            or _is_hourly_stale(rows[-1]["timestamp"])
+        )
+
+        if needs_refresh:
+            fresh = fetch_hourly_data(symbol)
+            if fresh:
+                try:
+                    _upsert_hourly(symbol, fresh)
+                except Exception as exc:
+                    logger.warning("_upsert_hourly(%s) failed: %s", symbol, exc)
+
+                conn = get_db()
+                rows = conn.execute(
+                    """SELECT timestamp, open, high, low, close, volume
+                       FROM hourly_price_history
+                       WHERE symbol = %s
+                       ORDER BY timestamp ASC""",
+                    (symbol,),
+                ).fetchall()
+                conn.close()
+
+        if not rows:
+            return pd.DataFrame()
+
+        df = pd.DataFrame(
+            [dict(r) for r in rows],
+            columns=["timestamp", "open", "high", "low", "close", "volume"],
+        )
+        df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
+        df = df.set_index("timestamp")
+        for col in ("open", "high", "low", "close"):
+            df[col] = df[col].astype(float)
+        df["volume"] = df["volume"].astype(float)
+        return df
+
+    except Exception as exc:
+        logger.warning("get_or_refresh_hourly_data(%s) failed: %s", symbol, exc)
+        return pd.DataFrame()

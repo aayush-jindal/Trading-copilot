@@ -107,6 +107,10 @@ class SupportResistance(BaseModel):
     distance_to_support_pct: float
     support_strength: str       # "HIGH" | "MEDIUM" | "LOW"
     resistance_strength: str    # "HIGH" | "MEDIUM" | "LOW"
+    support_is_provisional: bool = False
+    resistance_is_provisional: bool = False
+    provisional_support: float | None = None
+    provisional_resistance: float | None = None
 
 
 class CandlestickSignals(BaseModel):
@@ -145,12 +149,18 @@ class SwingConditions(BaseModel):
     obv_trend: str
     reversal_candle: ReversalCandleCondition
     trigger_ok: bool
+    rr_ratio: float | None = None
+    rr_label: str = "unavailable"   # "good" | "marginal" | "poor" | "bad" | "unavailable"
+    rr_gate_pass: bool = True
+    rr_warning: str | None = None
 
 
 class SwingLevels(BaseModel):
     nearest_support: float
     nearest_resistance: float
     sr_alignment: str  # "aligned" | "misaligned" | "neutral"
+    support_is_provisional: bool = False
+    resistance_is_provisional: bool = False
 
 
 class EntryZone(BaseModel):
@@ -163,6 +173,7 @@ class SwingRisk(BaseModel):
     entry_zone: EntryZone
     stop_loss: float
     target: float
+    rr_ratio: float | None = None
     rr_to_resistance: float | None = None
 
 
@@ -177,6 +188,16 @@ class SwingSetup(BaseModel):
     reasons: list[str]
 
 
+class FourHConfirmation(BaseModel):
+    four_h_reversal:      bool
+    four_h_trigger:       bool
+    four_h_rsi:           float
+    four_h_rsi_ok:        bool
+    four_h_confirmed:     bool
+    four_h_available:     bool
+    four_h_reversal_name: str | None = None
+
+
 class AnalysisResponse(BaseModel):
     ticker: str
     price: float
@@ -188,3 +209,5 @@ class AnalysisResponse(BaseModel):
     candlestick: list[CandlestickSignals]
     swing_setup: SwingSetup | None = None
     weekly_trend: WeeklyTrend | None = None
+    four_h_confirmation: FourHConfirmation | None = None
+    four_h_upgrade: bool = False

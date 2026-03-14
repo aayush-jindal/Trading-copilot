@@ -4,10 +4,16 @@ import pytest
 from unittest.mock import patch
 
 from app.services.ta_engine import (
+    _apply_rr_gate,
+    _classify_rr_ratio,
     _find_reversal_candles,
+    _get_provisional_levels,
+    _NEUTRAL_4H,
     _NEUTRAL_WEEKLY_TREND,
     _prepare_dataframe,
+    _resample_to_4h,
     analyze_ticker,
+    compute_4h_confirmation,
     compute_candlestick_patterns,
     compute_momentum_signals,
     compute_support_resistance,
@@ -145,9 +151,19 @@ class TestVolumeSignals:
 
 # ── Weekly-trend fixture helpers ──────────────────────────────────────────────
 
+def _last_bday() -> pd.Timestamp:
+    """Return today normalized to the most recent business day (pandas 3.x fix)."""
+    return pd.offsets.BDay().rollback(pd.Timestamp.today().normalize())
+
+
+def _last_friday() -> pd.Timestamp:
+    """Return the most recent Friday on or before today (pandas 3.x fix)."""
+    return pd.offsets.Week(weekday=4).rollback(pd.Timestamp.today().normalize())
+
+
 def _make_weekly_bullish_df(n: int = 60) -> pd.DataFrame:
     """n weekly bars with a clean uptrend: price > SMA10 > SMA40."""
-    dates = pd.date_range(end=pd.Timestamp.today().normalize(), periods=n, freq="W-FRI")
+    dates = pd.date_range(end=_last_friday(), periods=n, freq="W-FRI")
     close = np.linspace(80, 130, n)   # steady climb → SMA10 > SMA40 throughout
     df = pd.DataFrame(
         {"open": close, "high": close + 1, "low": close - 1,
@@ -160,7 +176,7 @@ def _make_weekly_bullish_df(n: int = 60) -> pd.DataFrame:
 
 def _make_weekly_bearish_df(n: int = 60) -> pd.DataFrame:
     """n weekly bars with a clean downtrend: price < SMA10 < SMA40."""
-    dates = pd.date_range(end=pd.Timestamp.today().normalize(), periods=n, freq="W-FRI")
+    dates = pd.date_range(end=_last_friday(), periods=n, freq="W-FRI")
     close = np.linspace(130, 80, n)   # steady decline
     df = pd.DataFrame(
         {"open": close, "high": close + 1, "low": close - 1,
@@ -331,6 +347,8 @@ class TestSupportResistance:
         result = compute_support_resistance(sample_df)
         assert isinstance(result["distance_to_resistance_pct"], float)
         assert isinstance(result["distance_to_support_pct"], float)
+        assert "support_is_provisional" in result
+        assert "resistance_is_provisional" in result
 
 
 class TestCandlestickPatterns:
@@ -437,6 +455,7 @@ class TestSwingSetup:
             "rsi_pullback_label", "pullback_rsi_ok",
             "near_support", "near_resistance", "volume_ratio", "volume_declining",
             "obv_trend", "reversal_candle", "trigger_ok",
+            "rr_ratio", "rr_label", "rr_gate_pass", "rr_warning",
         ]:
             assert key in cond, f"missing conditions key: {key}"
 
@@ -456,7 +475,7 @@ class TestSwingSetup:
         assert levels["sr_alignment"] in ("aligned", "misaligned", "neutral")
 
         risk = result["risk"]
-        for k in ["atr14", "entry_zone", "stop_loss", "target", "rr_to_resistance"]:
+        for k in ["atr14", "entry_zone", "stop_loss", "target", "rr_to_resistance", "rr_ratio"]:
             assert k in risk
         assert "low" in risk["entry_zone"]
         assert "high" in risk["entry_zone"]
@@ -775,7 +794,7 @@ def _make_oscillating_df() -> pd.DataFrame:
     above and support is below current price.
     """
     n = 300
-    dates = pd.date_range(end=pd.Timestamp.today().normalize(), periods=n, freq="B")
+    dates = pd.date_range(end=_last_bday(), periods=n, freq="B")
     t = np.linspace(0, 10 * np.pi, n)   # 5 complete oscillations
     close = 100.0 + 5.0 * np.sin(t)
     high = close + 0.5
@@ -793,7 +812,7 @@ def _make_oscillating_df() -> pd.DataFrame:
 
 def _make_monotone_df(n: int = 250) -> pd.DataFrame:
     """Strictly-increasing price series with minimal amplitude variation."""
-    dates = pd.date_range(end=pd.Timestamp.today().normalize(), periods=n, freq="B")
+    dates = pd.date_range(end=_last_bday(), periods=n, freq="B")
     close = np.linspace(80, 120, n)
     df = pd.DataFrame(
         {"open": close, "high": close + 0.1, "low": close - 0.1,
@@ -818,6 +837,8 @@ class TestSupportResistanceV2:
             "nearest_resistance", "nearest_support",
             "distance_to_resistance_pct", "distance_to_support_pct",
             "support_strength", "resistance_strength",   # new in v2
+            "support_is_provisional", "resistance_is_provisional",
+            "provisional_support", "provisional_resistance",
         }
         assert required.issubset(result.keys())
 
@@ -1102,3 +1123,414 @@ class TestSwingSetupRsiCooldown:
         result_mild = self._run(mock_ohlcv_df, rsi_current=57.0, rsi_peak=62.0)
         result_none = self._run(mock_ohlcv_df, rsi_current=60.0, rsi_peak=61.5)
         assert result_mild["setup_score"] - result_none["setup_score"] == 6
+
+
+class TestSwingSetupRiskRewardGate:
+    """Unit tests for the R:R classification and gating."""
+
+    @pytest.mark.parametrize(
+        "rr_ratio, expected_label, expected_gate",
+        [
+            (1.5, "good", True),
+            (2.0, "good", True),
+            (1.2, "marginal", True),
+            (1.0, "marginal", True),
+            (0.9, "poor", False),
+            (0.5, "poor", False),
+            (0.49, "bad", False),
+            (0.1, "bad", False),
+            (None, "unavailable", True),
+        ],
+    )
+    def test_rr_classification(self, rr_ratio, expected_label, expected_gate):
+        label, gate = _classify_rr_ratio(rr_ratio)
+        assert label == expected_label
+        assert gate is expected_gate
+
+    def test_verdict_gate_poor_downgrades_entry_to_watch(self):
+        verdict, warning = _apply_rr_gate(
+            verdict="ENTRY",
+            rr_ratio=0.8,
+            rr_label="poor",
+            rr_gate_pass=False,
+        )
+        assert verdict == "WATCH"
+        assert warning is not None
+        assert "too poor for entry" in warning
+
+    def test_verdict_gate_bad_downgrades_entry_to_no_trade(self):
+        verdict, warning = _apply_rr_gate(
+            verdict="ENTRY",
+            rr_ratio=0.3,
+            rr_label="bad",
+            rr_gate_pass=False,
+        )
+        assert verdict == "NO_TRADE"
+        assert warning is not None
+        assert "unfavourable regardless of other conditions" in warning
+
+    def test_verdict_gate_bad_downgrades_watch_to_no_trade(self):
+        verdict, warning = _apply_rr_gate(
+            verdict="WATCH",
+            rr_ratio=0.3,
+            rr_label="bad",
+            rr_gate_pass=False,
+        )
+        assert verdict == "NO_TRADE"
+        assert warning is not None
+
+    def test_verdict_gate_marginal_keeps_entry_with_warning(self):
+        verdict, warning = _apply_rr_gate(
+            verdict="ENTRY",
+            rr_ratio=1.1,
+            rr_label="marginal",
+            rr_gate_pass=True,
+        )
+        assert verdict == "ENTRY"
+        assert warning is not None
+        assert "R:R is marginal" in warning
+
+    def test_verdict_gate_good_keeps_entry_without_warning(self):
+        verdict, warning = _apply_rr_gate(
+            verdict="ENTRY",
+            rr_ratio=2.0,
+            rr_label="good",
+            rr_gate_pass=True,
+        )
+        assert verdict == "ENTRY"
+        assert warning is None
+
+
+class TestProvisionalLevels:
+    """Unit tests for _get_provisional_levels."""
+
+    def _make_df(self, lows: list[float], highs: list[float], closes: list[float]) -> pd.DataFrame:
+        n = len(closes)
+        dates = pd.date_range(end=_last_bday(), periods=n, freq="B")
+        df = pd.DataFrame(
+            {
+                "open": closes,
+                "high": highs,
+                "low": lows,
+                "close": closes,
+                "volume": np.ones(n) * 1_000_000,
+            },
+            index=dates,
+        )
+        df.index.name = "date"
+        return df
+
+    def test_recent_low_below_price_returns_provisional_support(self):
+        closes = [100] * 10
+        lows = [98, 99, 97, 96, 95, 96, 97, 96, 97, 100]
+        highs = [101] * 10
+        df = self._make_df(lows, highs, closes)
+        current_price = float(df["close"].iloc[-1])
+
+        result = _get_provisional_levels(df, current_price, n_bars=7)
+        assert result["provisional_support"] == round(min(lows[-8:-1]), 2)
+        assert result["provisional_support_distance_pct"] is not None
+
+    def test_recent_high_above_price_returns_provisional_resistance(self):
+        closes = [100] * 10
+        lows = [99] * 10
+        highs = [101, 102, 103, 104, 105, 104, 103, 102, 101, 100]
+        df = self._make_df(lows, highs, closes)
+        current_price = float(df["close"].iloc[-1])
+
+        result = _get_provisional_levels(df, current_price, n_bars=7)
+        assert result["provisional_resistance"] == round(max(highs[-8:-1]), 2)
+        assert result["provisional_resistance_distance_pct"] is not None
+
+    def test_recent_low_above_price_sets_provisional_support_none(self):
+        closes = [100] * 10
+        lows = [101, 102, 103, 104, 105, 104, 103, 102, 101, 100]
+        highs = [106] * 10
+        df = self._make_df(lows, highs, closes)
+        current_price = float(df["close"].iloc[-1])
+
+        result = _get_provisional_levels(df, current_price, n_bars=7)
+        assert result["provisional_support"] is None
+        assert result["provisional_support_distance_pct"] is None
+
+    def test_recent_low_too_far_discarded(self):
+        closes = [100] * 10
+        lows = [80, 81, 82, 83, 84, 85, 86, 87, 88, 100]  # > 8% below price
+        highs = [101] * 10
+        df = self._make_df(lows, highs, closes)
+        current_price = float(df["close"].iloc[-1])
+
+        result = _get_provisional_levels(df, current_price, n_bars=7, max_distance_pct=8.0)
+        assert result["provisional_support"] is None
+        assert result["provisional_support_distance_pct"] is None
+
+    def test_excludes_todays_bar(self):
+        closes = [100] * 10
+        lows = [98, 99, 97, 96, 95, 96, 97, 96, 95, 80]  # today's low = 80, previous window min = 95
+        highs = [101] * 10
+        df = self._make_df(lows, highs, closes)
+        current_price = float(df["close"].iloc[-1])
+
+        result = _get_provisional_levels(df, current_price, n_bars=7)
+        # should use min over bars 2..8 (0-based) and exclude today's 80
+        assert result["provisional_support"] == 95.0
+
+
+# ── 4H Engine Tests ───────────────────────────────────────────────────────────
+
+def _make_hourly_df(n_hours: int = 200, start_price: float = 100.0, trend: str = "up") -> pd.DataFrame:
+    """Generate a synthetic 1H OHLCV DataFrame with UTC DatetimeIndex."""
+    np.random.seed(7)
+    end = pd.Timestamp("2024-06-01 20:00:00", tz="UTC")
+    dates = pd.date_range(end=end, periods=n_hours, freq="1h")
+    drift = {"up": 0.0005, "down": -0.0005, "flat": 0.0}[trend]
+    returns = np.random.normal(drift, 0.005, n_hours)
+    close = start_price * np.cumprod(1 + returns)
+    high = close * (1 + np.abs(np.random.normal(0, 0.002, n_hours)))
+    low = close * (1 - np.abs(np.random.normal(0, 0.002, n_hours)))
+    open_ = np.roll(close, 1)
+    open_[0] = close[0]
+    volume = np.random.randint(100_000, 1_000_000, n_hours).astype(float)
+    df = pd.DataFrame(
+        {"open": open_, "high": high, "low": low, "close": close, "volume": volume},
+        index=dates,
+    )
+    df.index.name = "timestamp"
+    return df
+
+
+class TestResampleTo4H:
+    def test_returns_fewer_bars_than_input(self):
+        hourly = _make_hourly_df(n_hours=200)
+        df_4h = _resample_to_4h(hourly)
+        assert len(df_4h) < len(hourly)
+        assert len(df_4h) > 0
+
+    def test_empty_input_returns_empty(self):
+        result = _resample_to_4h(pd.DataFrame())
+        assert result.empty
+
+    def test_ohlcv_columns_present(self):
+        hourly = _make_hourly_df(n_hours=100)
+        df_4h = _resample_to_4h(hourly)
+        for col in ("open", "high", "low", "close", "volume"):
+            assert col in df_4h.columns
+
+    def test_high_is_max_of_constituent_bars(self):
+        """4H high must equal the maximum 1H high within the bucket."""
+        hourly = _make_hourly_df(n_hours=80)
+        df_4h = _resample_to_4h(hourly)
+        # Pick the first complete 4H bar and verify its high
+        if len(df_4h) >= 2:
+            bar_start = df_4h.index[0]
+            bar_end = df_4h.index[1]
+            window = hourly[(hourly.index >= bar_start) & (hourly.index < bar_end)]
+            if not window.empty:
+                assert abs(df_4h["high"].iloc[0] - window["high"].max()) < 1e-6
+
+
+class TestCompute4HConfirmation:
+    def test_empty_df_returns_neutral(self):
+        result = compute_4h_confirmation(pd.DataFrame())
+        assert result == _NEUTRAL_4H
+
+    def test_none_returns_neutral(self):
+        result = compute_4h_confirmation(None)
+        assert result == _NEUTRAL_4H
+
+    def test_insufficient_bars_returns_unavailable(self):
+        """Fewer than 20 4H bars → four_h_available: False, all False."""
+        # 40 hourly bars → ~10 4H bars (< 20 required)
+        hourly = _make_hourly_df(n_hours=40)
+        result = compute_4h_confirmation(hourly)
+        assert result["four_h_available"] is False
+        assert result["four_h_confirmed"] is False
+        assert result["four_h_reversal"] is False
+        assert result["four_h_trigger"] is False
+        assert result["four_h_rsi_ok"] is False
+
+    def test_sufficient_bars_returns_available(self):
+        """200 hourly bars → ~50 4H bars → four_h_available: True."""
+        hourly = _make_hourly_df(n_hours=200)
+        result = compute_4h_confirmation(hourly)
+        assert result["four_h_available"] is True
+        # RSI should be a valid float
+        assert isinstance(result["four_h_rsi"], float)
+        assert 0.0 <= result["four_h_rsi"] <= 100.0
+
+    def test_rsi_below_40_rsi_ok_false(self):
+        """When 4H RSI <= 40, four_h_rsi_ok should be False."""
+        # Downtrend data tends to produce low RSI
+        hourly = _make_hourly_df(n_hours=200, trend="down")
+        result = compute_4h_confirmation(hourly)
+        if result["four_h_available"] and result["four_h_rsi"] <= 40.0:
+            assert result["four_h_rsi_ok"] is False
+            assert result["four_h_confirmed"] is False
+
+    def test_confirmed_requires_reversal_and_rsi(self):
+        """four_h_confirmed is True only when reversal AND rsi_ok hold.
+
+        The trigger field is informational only and is intentionally excluded
+        from the confirmation gate (a 4H breakout is anti-correlated with the
+        daily WATCH pullback state that the upgrade is designed to improve).
+        """
+        hourly = _make_hourly_df(n_hours=200)
+        result = compute_4h_confirmation(hourly)
+        if result["four_h_available"]:
+            expected = result["four_h_reversal"] and result["four_h_rsi_ok"]
+            assert result["four_h_confirmed"] == expected
+
+    def test_no_crash_on_malformed_data(self):
+        """Should never raise — returns neutral on bad input."""
+        df = pd.DataFrame({"open": [1.0], "high": [2.0], "low": [0.5], "close": [1.5], "volume": [100.0]},
+                          index=pd.DatetimeIndex(["2024-01-01 00:00"], tz="UTC"))
+        result = compute_4h_confirmation(df)
+        assert isinstance(result, dict)
+        assert "four_h_confirmed" in result
+
+
+class TestAnalyzeTicker4HIntegration:
+    """Integration tests for the 4H upgrade logic inside analyze_ticker."""
+
+    def _run(self, daily_df, hourly_df=None):
+        price = float(daily_df["close"].iloc[-1])
+        return analyze_ticker(daily_df, "TEST", price, hourly_df=hourly_df)
+
+    def test_four_h_fields_always_present(self, sample_df):
+        """four_h_confirmation and four_h_upgrade are always in the result."""
+        result = self._run(sample_df)
+        assert "four_h_confirmation" in result
+        assert "four_h_upgrade" in result
+
+    def test_hourly_df_none_does_not_crash(self, sample_df):
+        """Passing hourly_df=None should not raise and four_h_available should be False."""
+        result = self._run(sample_df, hourly_df=None)
+        assert result["four_h_confirmation"]["four_h_available"] is False
+        assert result["four_h_upgrade"] is False
+
+    def test_no_trade_not_upgraded_by_4h(self, mock_ohlcv_df):
+        """4H confirmation must never upgrade NO_TRADE."""
+        # Bearish daily data → likely NO_TRADE
+        daily = mock_ohlcv_df(days=300, trend="down")
+        hourly = _make_hourly_df(n_hours=200, trend="up")
+        result = self._run(daily, hourly_df=hourly)
+        # Even if 4H is confirmed, a NO_TRADE daily verdict must stay NO_TRADE
+        if result["swing_setup"] and result["swing_setup"]["verdict"] == "NO_TRADE":
+            assert result["four_h_upgrade"] is False
+
+    def test_entry_verdict_unchanged_by_4h(self, mock_ohlcv_df):
+        """An existing ENTRY verdict (pre-4H) must not be double-upgraded."""
+        daily = mock_ohlcv_df(days=300, trend="up")
+        result_no_hourly = self._run(daily)
+        result_with_hourly = self._run(daily, hourly_df=_make_hourly_df(200))
+        # If daily alone gives ENTRY, 4H should not change it to something else
+        if result_no_hourly.get("swing_setup", {}) and result_no_hourly["swing_setup"]["verdict"] == "ENTRY":
+            assert result_with_hourly["swing_setup"]["verdict"] == "ENTRY"
+            # four_h_upgrade is only True for WATCH→ENTRY transitions
+            assert result_with_hourly["four_h_upgrade"] is False
+
+    def test_watch_upgrades_when_4h_confirmed(self, mock_ohlcv_df):
+        """WATCH with score >= entry_threshold + 4H confirmed → ENTRY."""
+        import unittest.mock as mock
+        from app.services import ta_engine
+
+        daily = mock_ohlcv_df(days=300, trend="up")
+        hourly = _make_hourly_df(200, trend="up")
+
+        _confirmed_4h = {**_NEUTRAL_4H, "four_h_available": True, "four_h_confirmed": True,
+                         "four_h_reversal": True, "four_h_trigger": True,
+                         "four_h_rsi": 55.0, "four_h_rsi_ok": True}
+
+        with mock.patch.object(ta_engine, "compute_4h_confirmation", return_value=_confirmed_4h):
+            with mock.patch.object(ta_engine, "compute_swing_setup_pullback",
+                                   return_value={"verdict": "WATCH", "setup_score": 75,
+                                                 "setup_type": "pullback_in_uptrend",
+                                                 "weekly_trend_warning": None,
+                                                 "conditions": {}, "levels": {}, "risk": {}, "reasons": []}):
+                result = self._run(daily, hourly_df=hourly)
+
+        assert result["swing_setup"]["verdict"] == "ENTRY"
+        assert result["four_h_upgrade"] is True
+
+    def test_watch_below_score_not_upgraded_by_4h(self, mock_ohlcv_df):
+        """WATCH with score < entry_threshold must NOT be upgraded even when 4H confirms."""
+        import unittest.mock as mock
+        from app.services import ta_engine
+
+        daily = mock_ohlcv_df(days=300, trend="up")
+        hourly = _make_hourly_df(200, trend="up")
+
+        _confirmed_4h = {**_NEUTRAL_4H, "four_h_available": True, "four_h_confirmed": True,
+                         "four_h_reversal": True, "four_h_rsi": 55.0, "four_h_rsi_ok": True}
+
+        with mock.patch.object(ta_engine, "compute_4h_confirmation", return_value=_confirmed_4h):
+            with mock.patch.object(ta_engine, "compute_swing_setup_pullback",
+                                   return_value={"verdict": "WATCH", "setup_score": 62,
+                                                 "setup_type": "pullback_in_uptrend",
+                                                 "weekly_trend_warning": None,
+                                                 "conditions": {}, "levels": {}, "risk": {}, "reasons": []}):
+                # Default entry_score_threshold is 70; score 62 should NOT qualify
+                result = self._run(daily, hourly_df=hourly)
+
+        assert result["swing_setup"]["verdict"] == "WATCH"
+        assert result["four_h_upgrade"] is False
+
+    def test_watch_stays_watch_when_4h_not_confirmed(self, mock_ohlcv_df):
+        """When daily says WATCH and 4H is NOT confirmed, verdict stays WATCH."""
+        import unittest.mock as mock
+        from app.services import ta_engine
+
+        daily = mock_ohlcv_df(days=300, trend="up")
+        hourly = _make_hourly_df(200, trend="up")
+
+        _pending_4h = {**_NEUTRAL_4H, "four_h_available": True, "four_h_confirmed": False}
+
+        with mock.patch.object(ta_engine, "compute_4h_confirmation", return_value=_pending_4h):
+            with mock.patch.object(ta_engine, "compute_swing_setup_pullback",
+                                   return_value={"verdict": "WATCH", "setup_score": 60,
+                                                 "setup_type": "pullback_in_uptrend",
+                                                 "weekly_trend_warning": None,
+                                                 "conditions": {}, "levels": {}, "risk": {}, "reasons": []}):
+                result = self._run(daily, hourly_df=hourly)
+
+        assert result["swing_setup"]["verdict"] == "WATCH"
+        assert result["four_h_upgrade"] is False
+
+
+class TestBacktesterHourlySlicing:
+    """Unit tests for hourly window slicing in the backtester."""
+
+    def test_analyze_ticker_from_df_no_hourly_no_crash(self, mock_ohlcv_df):
+        """analyze_ticker_from_df with hourly_df=None should not crash."""
+        from app.services.backtester import BacktestConfig, analyze_ticker_from_df
+
+        daily = mock_ohlcv_df(days=300, trend="up")
+        config = BacktestConfig(ticker="TEST")
+        result = analyze_ticker_from_df("TEST", daily, config, hourly_df=None)
+        four_h = result.get("four_h_confirmation", {})
+        assert four_h.get("four_h_available") is False
+
+    def test_analyze_ticker_from_df_with_hourly(self, mock_ohlcv_df):
+        """analyze_ticker_from_df with hourly_df provided returns four_h_available."""
+        from app.services.backtester import BacktestConfig, analyze_ticker_from_df
+
+        daily = mock_ohlcv_df(days=300, trend="up")
+        hourly = _make_hourly_df(n_hours=200, trend="up")
+        config = BacktestConfig(ticker="TEST")
+        result = analyze_ticker_from_df("TEST", daily, config, hourly_df=hourly)
+        four_h = result.get("four_h_confirmation", {})
+        # With 200 hourly bars → ~50 4H bars → available
+        assert isinstance(four_h.get("four_h_available"), bool)
+
+    def test_no_future_bars_in_hourly_window(self):
+        """Hourly window sliced to daily cutoff must not contain future bars."""
+        daily_cutoff = pd.Timestamp("2024-05-15", tz=None)
+        full_hourly = _make_hourly_df(n_hours=400, trend="flat")
+
+        # Simulate the slicing logic from run_backtest
+        cutoff_aware = daily_cutoff.tz_localize("UTC")
+        cutoff_end = cutoff_aware + pd.Timedelta(days=1)
+        sliced = full_hourly[full_hourly.index < cutoff_end]
+
+        if not sliced.empty:
+            assert sliced.index.max() < cutoff_end

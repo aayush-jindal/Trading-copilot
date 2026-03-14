@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 
 from app.models import AnalysisResponse
-from app.services.market_data import get_or_refresh_data, get_weekly_prices
+from app.services.market_data import get_or_refresh_data, get_or_refresh_hourly_data, get_weekly_prices
 from app.services.ta_engine import _prepare_dataframe, analyze_ticker
 
 router = APIRouter(prefix="/analyze", tags=["analysis"])
@@ -22,10 +22,22 @@ def analyze(ticker: str):
     except Exception:
         weekly_price_list = []
 
+    # Hourly data is best-effort — failure must not block daily analysis
+    try:
+        hourly_df = get_or_refresh_hourly_data(ticker.upper())
+    except Exception:
+        hourly_df = None
+
     try:
         df = _prepare_dataframe(price_list)
         price = df["close"].iloc[-1]
-        result = analyze_ticker(df, ticker_info["symbol"], float(price), weekly_price_list)
+        result = analyze_ticker(
+            df,
+            ticker_info["symbol"],
+            float(price),
+            weekly_price_list,
+            hourly_df=hourly_df,
+        )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
