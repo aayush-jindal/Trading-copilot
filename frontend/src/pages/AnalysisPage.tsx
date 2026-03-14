@@ -21,6 +21,7 @@ import BookStrategiesPanel from '../components/BookStrategiesPanel'
 import TickerCard from '../components/TickerCard'
 import LoadingSkeleton from '../components/LoadingSkeleton'
 import { useAuth } from '../context/AuthContext'
+import { OptionsContent } from './OptionsPage'
 import type { AnalysisResponse, PriceBar, TickerInfo } from '../types'
 
 const DEFAULT_DAYS = 365
@@ -68,6 +69,9 @@ export default function AnalysisPage() {
   // Notifications state
   const [showNotifications, setShowNotifications] = useState(false)
   const [unreadCount, setUnreadCount]     = useState(0)
+
+  // Tab state
+  const [activeTab, setActiveTab] = useState<'analysis' | 'options'>('analysis')
 
   const closeStreamRef = useRef<(() => void) | null>(null)
 
@@ -232,7 +236,6 @@ export default function AnalysisPage() {
           >
             Watchlist
           </button>
-
           {/* Divider */}
           <div className="hidden sm:block w-px h-5 bg-white/10 mx-1" />
 
@@ -268,6 +271,29 @@ export default function AnalysisPage() {
 
       {/* Main content */}
       <main className="flex-1 px-4 sm:px-6 py-5 flex flex-col gap-4 max-w-7xl w-full mx-auto">
+
+        {/* Tab bar */}
+        <div className="flex gap-1 border-b border-white/8 pb-0">
+          {(['analysis', 'options'] as const).map((tab) => (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-all capitalize -mb-px border-b-2 ${
+                activeTab === tab
+                  ? 'text-white border-blue-500'
+                  : 'text-gray-500 border-transparent hover:text-gray-300 hover:border-white/20'
+              }`}
+            >
+              {tab === 'analysis' ? 'Analysis' : 'Options Scanner'}
+            </button>
+          ))}
+        </div>
+
+        {/* Options tab */}
+        {activeTab === 'options' && <OptionsContent />}
+
+        {/* Analysis tab */}
+        {activeTab === 'analysis' && <>
 
         {/* Error banner */}
         {error && (
@@ -354,6 +380,8 @@ export default function AnalysisPage() {
             )}
           </div>
         )}
+
+        </>}
       </main>
 
       {/* Notifications slide-out panel */}

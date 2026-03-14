@@ -1,6 +1,7 @@
 import type {
   AnalysisResponse,
   Notification,
+  OptionsScanResponse,
   PriceHistoryResponse,
   WatchlistDashboardItem,
   WatchlistItem,
@@ -146,6 +147,24 @@ export async function fetchKnowledgeStrategies(
     throw new Error(
       (detail as { detail?: string })?.detail ?? `Knowledge strategies unavailable (${res.status})`
     )
+  }
+  return res.json()
+}
+
+// ── Options scanner ───────────────────────────────────────────────────────────
+
+export async function scanOptions(
+  tickers: string[],
+  includeAi = false
+): Promise<OptionsScanResponse> {
+  const res = await apiFetch('/api/options/scan', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tickers, include_ai: includeAi }),
+  })
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({}))
+    throw new Error((detail as { detail?: string })?.detail ?? `Options scan failed (${res.status})`)
   }
   return res.json()
 }

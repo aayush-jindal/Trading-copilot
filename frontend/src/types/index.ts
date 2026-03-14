@@ -200,6 +200,64 @@ export interface AnalysisResponse {
   weekly_trend: WeeklyTrend | null
 }
 
+// ── Options scanner ───────────────────────────────────────────────────────────
+
+export interface OptionsLeg {
+  action: 'buy' | 'sell'
+  option_type: 'call' | 'put'
+  strike: number
+  iv: number
+  price: number
+  delta: number
+  theta: number
+}
+
+export interface OptionsOpportunity {
+  outlook: 'short' | 'medium' | 'long'
+  dte: number
+  expiry: string
+  strategy: string
+  is_credit: boolean
+  bias: string
+  bias_score: number
+  legs: OptionsLeg[]
+  entry: number
+  exit_target: number
+  exit_pct: number
+  target_underlying: number | null
+  option_stop: number
+  underlying_stop: number
+  max_profit: number | null
+  max_loss: number | null
+  delta: number
+  gamma: number
+  theta: number
+  vega: number
+  prob_profit: number
+  expected_payoff: number
+  nearest_resistance: number
+  nearest_support: number
+  hist_vol: number
+  iv_vs_hv: number
+  atr: number
+  atr_pct: number
+}
+
+export interface OptionsTickerResult {
+  ticker: string
+  name?: string | null
+  sector?: string | null
+  current_price?: number | null
+  opportunities: OptionsOpportunity[]
+  knowledge_strategies?: string | null
+  error?: string | null
+}
+
+export interface OptionsScanResponse {
+  results: OptionsTickerResult[]
+  ai_narrative?: string | null
+}
+
 export interface AuthResponse {
   access_token: string
   token_type: string
