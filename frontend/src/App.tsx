@@ -4,6 +4,7 @@ import AnalysisPage from './pages/AnalysisPage'
 import LoginPage from './pages/LoginPage'
 import SignupPage from './pages/SignupPage'
 import WatchlistPage from './pages/WatchlistPage'
+import OptionsPage from './pages/OptionsPage'
 import type { ReactNode } from 'react'
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
@@ -29,6 +30,14 @@ function AppRoutes() {
         element={
           <ProtectedRoute>
             <WatchlistPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/options"
+        element={
+          <ProtectedRoute>
+            <OptionsPage />
           </ProtectedRoute>
         }
       />

@@ -1,0 +1,3 @@
+# Backtesting Framework
+
+This package provides a bar-by-bar backtesting engine for Trading Copilot strategies. It wraps `app/services/ta_engine.py` and `app/services/market_data.py` in a strictly read-only relationship — it calls their functions but never modifies them, preserving all signal weights and scoring logic. Market data is fetched directly via yfinance (bypassing the DB cache) so backtests can be run standalone without a running database. Three strategies are planned: a swing-pullback entry strategy based on TC's existing `swing_setup` signal, a trend-following strategy driven by golden/death cross and SMA alignment, and a mean-reversion strategy using RSI extremes and Bollinger Band squeeze conditions.

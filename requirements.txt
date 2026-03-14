@@ -2,10 +2,12 @@ fastapi
 uvicorn[standard]
 yfinance
 pandas
+numpy
 pydantic
 ta
 scipy
 TA-Lib
+matplotlib
 anthropic
 openai
 python-jose[cryptography]
