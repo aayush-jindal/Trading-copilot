@@ -2,6 +2,219 @@
 
 ---
 
+## 2026-03-14 — Task 2.6: S3 BBSqueezeStrategy upgraded with factory pattern
+
+### Modified
+- `backtesting/strategies/s3_bb_squeeze.py` — added `type = "breakout"`, updated imports; added `_check_conditions()` (4 conditions: squeeze resolved, price above BB upper, volume ≥ 1.5×, SMA200), `_compute_risk()` (BB lower stop, 2×ATR target), `evaluate()`; `should_enter`/`should_exit`/`get_stops` unchanged
+- `backtesting/strategies/registry.py` — `BBSqueezeStrategy` registered (registry now has 3 strategies)
+
+### Verified
+```
+Active strategies: ['S2_RSIMeanReversion']
+S1_TrendPullback: NO_TRADE score=37
+S2_RSIMeanReversion: NO_TRADE score=0
+S3_BBSqueeze: NO_TRADE score=0
+Registry size: 3
+2.6 ok
+```
+
+---
+
+## 2026-03-14 — Task 2.5: S2 RSIMeanReversionStrategy upgraded with factory pattern
+
+### Modified
+- `backtesting/strategies/s2_rsi_reversion.py` — added `type = "reversion"`, updated imports; added `_check_conditions()` (3 conditions: SMA200, RSI cross above 30, BB position < 20), `_compute_risk()` (1.5×ATR stop, BB-middle target), `evaluate()`; `should_enter`/`should_exit`/`get_stops` unchanged
+  - Fixed: `distance_from_sma200_pct` can be `None` — guarded with `or 0`
+- `backtesting/strategies/registry.py` — `RSIMeanReversionStrategy` registered
+
+### Verified
+```
+S1_TrendPullback: NO_TRADE score=37
+S2_RSIMeanReversion: NO_TRADE score=0
+Registry size: 2
+2.5 ok
+```
+
+---
+
+## 2026-03-14 — Task 2.4: StrategyScanner built
+
+### Added
+- `backtesting/scanner.py` — `StrategyScanner.scan(ticker, account_size, risk_pct)`
+  - Fetches last 500 days of daily data via `YFinanceProvider`
+  - Computes `SignalSnapshot` via `SignalEngine`
+  - Evaluates all strategies in `STRATEGY_REGISTRY`
+  - Filters out `NO_TRADE` results
+  - Computes `position_size = int((account_size * risk_pct) / (entry - stop))` on each remaining result
+  - Sorts by score descending
+
+### Verified
+```
+Scanning SPY...
+SPY: 1 strategies with WATCH/ENTRY verdict
+  S1_TrendPullback: WATCH score=50
+2.4 ok
+```
+
+---
+
+## 2026-03-14 — Task 2.3: S1 upgraded with evaluate() factory methods
+
+### Modified
+- `backtesting/strategies/s1_trend_pullback.py` — added `_check_conditions()`, `_compute_risk()`, `evaluate()`; `type = "trend"` class attribute added; `should_enter`/`should_exit`/`get_stops` unchanged (used by BacktestEngine)
+  - `_check_conditions`: reads `swing["conditions"]` dict, returns 8 `Condition` objects covering uptrend, weekly alignment, ADX, RSI pullback, support proximity, volume, reversal candle, trigger
+  - `_compute_risk`: reads `swing["risk"]["stop_loss"]` / `swing["risk"]["target"]` (nested structure), returns `RiskLevels`
+  - `evaluate`: calls `_check_conditions` → `_verdict` → `_compute_risk`, returns `StrategyResult`
+
+### Verified
+```
+S1_TrendPullback NO_TRADE 25
+2.3 ok
+```
+
+---
+
+## 2026-03-14 — Task 2.2: Strategy registry created
+
+### Added
+- `backtesting/strategies/registry.py` — `STRATEGY_REGISTRY` list with `TrendPullbackStrategy()` as sole entry; import of S1 will fail until Task 2.3 adds `evaluate()` — expected and correct per spec
+
+### Verified
+- `ast.parse(registry.py)` → syntax valid ✓
+- `python3 scripts/smoke_test.py` → 33/33 ✓
+
+---
+
+## 2026-03-14 — Task 2.1: Factory dataclasses added to base.py
+
+### Modified
+- `backtesting/base.py` — added `Condition` dataclass (label, passed, value, required); `RiskLevels` dataclass (entry_price, stop_loss, target, risk_reward, atr, entry_zone_low/high, position_size); `StrategyResult` dataclass (name, type, verdict, score, conditions, risk, strategy_instance); upgraded `BaseStrategy` with `type` class attribute, abstract `evaluate()` / `_check_conditions()` / `_compute_risk()`, and default `_verdict()` implementation (all passed→ENTRY, ≥50%→WATCH, <50%→NO_TRADE with proportional score)
+
+### Unchanged
+- `engine.py`, `data.py`, `signals.py`, `results.py` untouched
+
+### Verified
+- `inspect.isabstract(BaseStrategy)` ✓, `hasattr evaluate/_check_conditions/_compute_risk` ✓
+- `python3 scripts/smoke_test.py` → 33/33 ✓
+
+---
+
+## 2026-03-14 — Task 2.4: Full backtest run + gate check
+
+### Added
+- `backtesting/run_backtest.py` — runs all three strategies on full universe (SPY, QQQ, AAPL, MSFT, GOOGL, AMZN, JPM, XLF, XLK, XLE, GLD), prints per-strategy summary tables, exports CSVs to `backtest_results/`, prints aggregate gate result and overall phase verdict
+- `.gitignore` — added `backtest_results/` entry
+
+### Results (2019-01-01 → 2024-01-01, full universe, Docker)
+
+**S1 TrendPullbackStrategy — 226 trades · Agg. Expectancy +0.1262R — PASS ✓**
+
+| Ticker | Trades | Win% | Expectancy |
+|--------|--------|------|------------|
+| SPY    | 38     | 79%  | +0.090R    |
+| QQQ    | 26     | 85%  | +0.195R    |
+| AAPL   | 20     | 85%  | +0.251R    |
+| MSFT   | 17     | 94%  | +0.246R    |
+| GOOGL  | 17     | 77%  | −0.003R    |
+| AMZN   | 9      | 67%  | +0.040R    |
+| JPM    | 24     | 79%  | +0.129R    |
+| XLF    | 29     | 69%  | +0.002R    |
+| XLK    | 22     | 73%  | +0.140R    |
+| XLE    | 5      | 100% | +0.581R    |
+| GLD    | 19     | 79%  | +0.075R    |
+
+**S2 RSIMeanReversionStrategy — 12 trades · Agg. Expectancy −0.2853R — FAIL ✗**
+- RSI < 30 threshold too conservative for large-cap indices/ETFs; only 12 signals in 5 years
+
+**S3 BBSqueezeStrategy — 22 trades · Agg. Expectancy +0.0298R — FAIL ✗**
+- 22 trades but below the 30-trade minimum; positive expectancy but insufficient sample size
+
+### Gate status
+- Strategies passing gate : TrendPullback (S1)
+- Strategies failing gate : RSIMeanReversion (S2), BBSqueeze (S3)
+- **Overall: ADVANCE TO PHASE 3 ✓** (Phase 2 checklist requires at least S1 to pass)
+
+### Verified
+- `python3 scripts/smoke_test.py` → 33/33 passed ✓
+- `git diff app/` → zero changes ✓
+
+---
+
+## 2026-03-14 — Backtesting documentation updated with Phase 2 results
+
+### Modified
+- `docs/backtesting.md` — updated S1/S2/S3 results sections with real numbers from Task 2.4 full run; updated phase progress table to show Phase 2 complete; Phase 2 gate table now has actual trade counts and expectancies
+
+---
+
+## 2026-03-14 — Backtesting documentation
+
+### Added
+- `docs/backtesting.md` — layman-friendly overview of the backtesting framework: what it does, how it fits into the project, core concepts (no look-ahead bias, R-multiples, trade lifecycle), per-strategy explanation with results, test universe, phase progress table, running instructions, and key design rules
+
+---
+
+## 2026-03-14 — Task 2.3: S3 BBSqueezeStrategy
+
+### Added
+- `backtesting/strategies/s3_bb_squeeze.py` — `BBSqueezeStrategy(BaseStrategy)` with `name = "S3_BBSqueeze"`; entry when BB squeeze resolves (prev_squeeze=True → curr=False) AND price breaks above upper band AND volume_ratio ≥ 1.5 AND price above SMA200; stop = BB lower at entry bar; target = entry + 2×ATR; exit when price closes back below BB upper (false breakout) or OBV trend FALLING; tracks `_prev_squeeze` per ticker
+
+### Key decisions
+- Requires squeeze on PREVIOUS bar to catch the actual breakout bar, not mid-squeeze
+- Volume filter (≥1.5× avg) reduces false breakouts significantly
+- `_prev_squeeze` handled by existing engine state-tracking fix from Task 2.2
+
+### Unchanged
+- `app/services/ta_engine.py` untouched
+
+### Verified (SPY+QQQ+AAPL 2019-2024, Docker)
+- SPY: 1 trade · WR=0% · E=−0.07R; QQQ: 1 trade; AAPL: 4 trades · WR=50% · E=+0.07R
+- Diagnosis: 32 squeeze resolutions on SPY, only 1 passes all three entry filters (price>upper + vol + SMA200). Strict filter by design — will fail gate (documented in Task 2.4)
+- `pytest backtesting/tests/` → 1 passed ✓
+
+---
+
+## 2026-03-14 — Task 2.2: S2 RSIMeanReversionStrategy
+
+### Added
+- `backtesting/strategies/s2_rsi_reversion.py` — `RSIMeanReversionStrategy(BaseStrategy)` with `name = "S2_RSIMeanReversion"`; entry on RSI crossover above 30 (prev < 30 AND curr ≥ 30) combined with price above SMA200 and BB position < 20; stop = entry − 1.5×ATR; target = BB middle (fallback: entry + 2×ATR); exit on RSI ≥ 55; tracks `_prev_rsi` per ticker
+
+### Modified
+- `backtesting/engine.py` — `_run_ticker` now always calls `should_enter` every bar (not only when flat) so `_prev_rsi` / `_prev_squeeze` state stays current through open trades; passes `ticker=` kwarg when strategy has per-ticker state attributes
+
+### Key decisions
+- RSI crossover above 30 (not just level) reduces false entries but produces few signals on index ETFs
+- SMA200 filter prevents mean reversion trades in downtrends
+- BB position < 20 ensures price still near lower band at entry
+
+### Unchanged
+- `app/services/ta_engine.py` untouched
+
+### Verified (SPY+QQQ 2019-2024, Docker)
+- SPY: 2 trades · WR=50% · E=+0.197R; QQQ: 1 trade · WR=100% · E=+1.367R
+- Full universe preview: 12 trades total — will fail Phase 2 gate (gate check in Task 2.4)
+- `pytest backtesting/tests/` → 1 passed ✓
+
+---
+
+## 2026-03-14 — Task 2.1: S1 TrendPullbackStrategy
+
+### Added
+- `backtesting/strategies/s1_trend_pullback.py` — `TrendPullbackStrategy(BaseStrategy)` with `name = "S1_TrendPullback"`; entry reads `swing_setup.verdict == "ENTRY"` and validates `risk.stop_loss` / `risk.target`; stops taken unchanged from `swing_setup.risk`; exit on RSI ≥ 65 or price ≥ nearest_resistance
+
+### Key decisions
+- Entry reads `swing_setup.verdict` directly — zero reimplementation of swing logic
+- Stop/target sourced from `swing_setup["risk"]` (nested per actual ta_engine output)
+- Phase 2 spec pseudocode shows top-level keys; adapted to match actual ta_engine structure
+
+### Unchanged
+- `app/services/ta_engine.py` untouched
+
+### Verified (SPY 2019-01-01 → 2024-01-01, Docker)
+- 38 trades · WR=79.0% · AvgR=0.090 · Expectancy=0.090 R · PF=1.866 — **GATE PASS ✓**
+
+---
+
 ## 2026-03-14 — Task 1.7: Framework integration test
 
 ### Added

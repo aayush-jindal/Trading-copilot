@@ -1,0 +1,5 @@
+{
+  "extraPaths": [
+    "app/services/options/pricing/src"
+  ]
+}

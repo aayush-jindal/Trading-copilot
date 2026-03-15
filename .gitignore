@@ -102,3 +102,6 @@ logs/
 # Build artifacts
 *.manifest
 *.spec
+
+# Backtesting output
+backtest_results/

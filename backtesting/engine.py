@@ -112,7 +112,11 @@ class BacktestEngine:
                     open_trade = None
 
             # ── Check for new entry (only when flat) ──────────────────────
-            if open_trade is None and strategy.should_enter(snapshot):
+            # Always call should_enter so per-ticker state (_prev_rsi, _prev_squeeze)
+            # stays current even during open trades.
+            _enter_kwargs = {"ticker": ticker} if hasattr(strategy, "_prev_rsi") or hasattr(strategy, "_prev_squeeze") else {}
+            _want_entry = strategy.should_enter(snapshot, **_enter_kwargs)
+            if open_trade is None and _want_entry:
                 stops: StopConfig = strategy.get_stops(snapshot)
                 open_trade = Trade(
                     ticker=ticker,
