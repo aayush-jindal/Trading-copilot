@@ -1,3 +1,11 @@
+"""Watchlist management endpoints.
+
+GET    /watchlist           — list the user's watched tickers
+GET    /watchlist/dashboard — live price + trend signal per ticker
+POST   /watchlist/{ticker}  — add a ticker (idempotent)
+DELETE /watchlist/{ticker}  — remove a ticker
+"""
+
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -29,6 +37,7 @@ class WatchlistDashboardItem(BaseModel):
 
 @router.get("", response_model=list[WatchlistItem])
 def get_watchlist(user: dict = Depends(get_current_user)):
+    """Return all tickers in the user's watchlist, newest first."""
     conn = get_db()
     rows = conn.execute(
         "SELECT ticker_symbol, date_added FROM watchlists WHERE user_id = %s ORDER BY date_added DESC",
@@ -42,6 +51,11 @@ def get_watchlist(user: dict = Depends(get_current_user)):
 
 @router.get("/dashboard", response_model=list[WatchlistDashboardItem])
 def get_watchlist_dashboard(user: dict = Depends(get_current_user)):
+    """Return watchlist tickers enriched with live price and trend signal.
+
+    Runs full TA analysis per ticker. Errors per-ticker are swallowed so
+    one bad ticker never breaks the whole dashboard.
+    """
     conn = get_db()
     rows = conn.execute(
         "SELECT ticker_symbol FROM watchlists WHERE user_id = %s ORDER BY date_added DESC",
@@ -85,6 +99,7 @@ def get_watchlist_dashboard(user: dict = Depends(get_current_user)):
 
 @router.post("/{ticker}", status_code=201)
 def add_to_watchlist(ticker: str, user: dict = Depends(get_current_user)):
+    """Add a ticker to the user's watchlist. No-op if already present."""
     symbol = ticker.upper()
     conn = get_db()
     try:
@@ -104,6 +119,7 @@ def add_to_watchlist(ticker: str, user: dict = Depends(get_current_user)):
 
 @router.delete("/{ticker}")
 def remove_from_watchlist(ticker: str, user: dict = Depends(get_current_user)):
+    """Remove a ticker from the user's watchlist. Returns 404 if not found."""
     symbol = ticker.upper()
     conn = get_db()
     result = conn.execute(

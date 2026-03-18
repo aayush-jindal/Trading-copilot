@@ -1,3 +1,12 @@
+"""Shared pytest fixtures for the Trading Copilot test suite.
+
+Provides:
+    authed_client     — FastAPI TestClient with JWT dependency bypassed
+    mock_ohlcv_df     — factory for synthetic OHLCV DataFrames
+    sample_df         — 300-day uptrend DataFrame
+    sample_price_list — sample_df converted to list[dict] (DB output format)
+"""
+
 import numpy as np
 import pandas as pd
 import pytest

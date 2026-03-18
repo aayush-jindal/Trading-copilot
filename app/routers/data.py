@@ -1,3 +1,11 @@
+"""Market data endpoints.
+
+GET /data/{ticker}         — full price history (up to HISTORY_PERIOD)
+GET /data/{ticker}/latest  — most recent N days (default 365, max 2190)
+
+Both endpoints return cached data if fresh, otherwise fetch from yfinance.
+"""
+
 from fastapi import APIRouter, HTTPException, Query
 
 from app.models import PriceHistoryResponse
@@ -8,6 +16,7 @@ router = APIRouter(prefix="/data", tags=["data"])
 
 @router.get("/{ticker}", response_model=PriceHistoryResponse)
 def get_ticker_data(ticker: str):
+    """Return full OHLCV history for a ticker (fetches from yfinance if stale)."""
     try:
         ticker_info, prices, source = get_or_refresh_data(ticker)
     except ValueError as e:
@@ -21,6 +30,7 @@ def get_ticker_data(ticker: str):
 
 @router.get("/{ticker}/latest", response_model=PriceHistoryResponse)
 def get_ticker_latest(ticker: str, days: int = Query(default=365, ge=1, le=2190)):
+    """Return the most recent N days of OHLCV data for a ticker."""
     try:
         ticker_info, prices, source = get_latest_prices(ticker, days)
     except ValueError as e:

@@ -1,3 +1,12 @@
+"""Notification endpoints.
+
+Nightly digest results and trade alerts are stored as notifications.
+
+GET    /notifications             — list the 50 most recent for current user
+PATCH  /notifications/{id}/read  — mark a single notification as read
+PATCH  /notifications/read-all   — mark all notifications as read
+"""
+
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
@@ -16,6 +25,7 @@ class Notification(BaseModel):
 
 @router.get("", response_model=list[Notification])
 def get_notifications(user: dict = Depends(get_current_user)):
+    """Return the 50 most recent notifications for the authenticated user."""
     conn = get_db()
     rows = conn.execute(
         """SELECT id, content, created_at, is_read
@@ -38,6 +48,7 @@ def get_notifications(user: dict = Depends(get_current_user)):
 
 @router.patch("/{notification_id}/read")
 def mark_read(notification_id: int, user: dict = Depends(get_current_user)):
+    """Mark a single notification as read (scoped to current user)."""
     conn = get_db()
     conn.execute(
         "UPDATE notifications SET is_read = TRUE WHERE id = %s AND user_id = %s",
@@ -50,6 +61,7 @@ def mark_read(notification_id: int, user: dict = Depends(get_current_user)):
 
 @router.patch("/read-all")
 def mark_all_read(user: dict = Depends(get_current_user)):
+    """Mark all notifications as read for the current user."""
     conn = get_db()
     conn.execute(
         "UPDATE notifications SET is_read = TRUE WHERE user_id = %s",

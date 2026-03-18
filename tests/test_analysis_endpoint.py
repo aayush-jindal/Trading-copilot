@@ -1,3 +1,9 @@
+"""Integration tests for GET /analyze/{ticker}.
+
+Verifies response structure, Pydantic model validation, swing_setup
+field presence, 404 on invalid ticker, and individual signal sections.
+"""
+
 from unittest.mock import patch
 
 import pytest

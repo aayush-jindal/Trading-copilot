@@ -1,3 +1,12 @@
+"""PostgreSQL database connection and schema initialisation.
+
+get_db() returns a _Conn wrapper that exposes the same execute/commit/close
+interface as sqlite3, so the rest of the codebase is DB-agnostic.
+
+init_db() is called once at application startup (via FastAPI lifespan) and
+creates all tables + indexes idempotently. It also seeds hardcoded users.
+"""
+
 import psycopg2
 import psycopg2.extras
 

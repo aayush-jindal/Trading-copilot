@@ -1,3 +1,9 @@
+"""Integration tests for GET /synthesize/{ticker}.
+
+Verifies SSE event-stream format, 404 on unknown ticker, and 503 when
+the AI API key is not configured.
+"""
+
 from unittest.mock import patch
 
 import pytest
@@ -5,6 +11,7 @@ import pytest
 
 @pytest.fixture
 def mock_price_data(sample_price_list):
+    """Return mock (ticker_info, price_list, source) tuple for synthesis tests."""
     ticker_info = {
         "symbol": "TEST",
         "company_name": "Test Corp",

@@ -1,3 +1,10 @@
+"""Technical analysis and RAG strategy endpoints.
+
+GET /analyze/{ticker}                    — full TA signal set for a ticker
+GET /analyze/{ticker}/knowledge-strategies — RAG pipeline: signals → book
+                                             retrieval → Claude → strategies
+"""
+
 from fastapi import APIRouter, HTTPException
 
 from app.models import AnalysisResponse

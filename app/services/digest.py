@@ -1,3 +1,16 @@
+"""Nightly digest and morning briefing generation.
+
+Functions in this module are called from a cron job (not a FastAPI request),
+so they use get_db() directly rather than FastAPI's Depends(get_db).
+
+Public API:
+    generate_digest_for_user(user_id)    — one-line TA summary per watchlist ticker
+    save_digest_notification(user_id, digest) — persist digest as a notification
+    generate_strategy_briefing(user_id)  — ENTRY setups from live strategy scan
+    generate_trade_alerts(user_id)       — exit alerts for open trades
+    run_nightly_refresh()                — orchestrates data refresh + all digests
+"""
+
 import json
 from datetime import datetime, timezone
 
