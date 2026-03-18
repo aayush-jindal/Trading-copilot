@@ -2,6 +2,41 @@
 
 ---
 
+## 2026-03-18 — Tasks 3.3 / 3.4 / 3.5: strategies router
+
+### Added
+- `app/routers/strategies.py`: four endpoints (fixed paths defined before `/{ticker}` to avoid route shadowing):
+  - `GET /strategies/settings` — returns user's account_size + risk_pct
+  - `PATCH /strategies/settings` — updates settings (validates account_size > 0, risk_pct ∈ (0, 0.05])
+  - `GET /strategies/scan/watchlist` — parallel ThreadPoolExecutor scan across all watchlist tickers, results sorted by score descending
+  - `GET /strategies/{ticker}` — runs StrategyScanner for one ticker with user's settings
+
+### Modified
+- `app/main.py`: registered `strategies.router` under JWT auth middleware
+
+### Verified
+- `GET /strategies/SPY` returns 3 WATCH results (S8, S1, S7)
+- `PATCH` + `GET /strategies/settings` round-trips correctly
+- 33/33 smoke test checks pass
+
+---
+
+## 2026-03-18 — Task 3.2: User settings columns added to DB
+
+### Modified
+- `app/database.py`: `ALTER TABLE users ADD COLUMN IF NOT EXISTS account_size NUMERIC(12,2) DEFAULT 10000.00, risk_pct NUMERIC(5,4) DEFAULT 0.0100` — safe to run on existing DBs
+- `app/models.py`: added `UserSettings(account_size=10000.0, risk_pct=0.01)` Pydantic model
+
+---
+
+## 2026-03-18 — Task 3.1: StrategyScanner filters to validated strategies only
+
+### Modified
+- `backtesting/scanner.py`: loads `validated_strategies.json` on init, filters `STRATEGY_REGISTRY` to only strategies in the `"validated"` list. Stores as `self._active_strategies` (set once, never mutated — thread-safe for Task 3.4). `scan()` creates `YFinanceProvider` and `SignalEngine` per call (no shared mutable state).
+- Active strategies: S1, S2, S3, S7, S8, S9 (6 validated). S10 excluded (pending).
+
+---
+
 ## 2026-03-18 — Task 2.10: S8v2 comparison, SQLiteProvider, run_backtest SQLite-only
 
 ### Added

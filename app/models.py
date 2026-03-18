@@ -1,6 +1,11 @@
 from pydantic import BaseModel
 
 
+class UserSettings(BaseModel):
+    account_size: float = 10000.0
+    risk_pct: float = 0.01
+
+
 class TickerInfo(BaseModel):
     symbol: str
     company_name: str | None = None

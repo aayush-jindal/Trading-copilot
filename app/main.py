@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.database import init_db
 from app.dependencies import get_current_user
-from app.routers import analysis, auth, data, internal, notifications, options, player, synthesis, watchlist
+from app.routers import analysis, auth, data, internal, notifications, options, player, strategies, synthesis, watchlist
 
 
 @asynccontextmanager
@@ -41,6 +41,7 @@ app.include_router(synthesis.router,     **_auth)
 app.include_router(watchlist.router,     **_auth)
 app.include_router(notifications.router, **_auth)
 app.include_router(options.router,       **_auth)
+app.include_router(strategies.router,    **_auth)
 app.include_router(player.router,        **_auth)
 
 

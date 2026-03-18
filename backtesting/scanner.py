@@ -1,6 +1,10 @@
 """
-StrategyScanner — runs all registered strategies against live signals.
+StrategyScanner — runs validated strategies against live signals.
 Returns results ranked by score descending. NO_TRADE results excluded.
+
+Only strategies listed in validated_strategies.json "validated" key are run.
+Adding a strategy to the live scanner = passing the backtest gate and
+updating validated_strategies.json. No code changes needed.
 
 Usage:
     from backtesting.scanner import StrategyScanner
@@ -8,18 +12,26 @@ Usage:
     results = scanner.scan("AAPL", account_size=50000, risk_pct=0.01)
 """
 
+import json
+import os
 from datetime import datetime, timedelta
 
 from backtesting.data import YFinanceProvider
 from backtesting.signals import SignalEngine
 from backtesting.strategies.registry import STRATEGY_REGISTRY
 
+_VALIDATED_JSON = os.path.join(
+    os.path.dirname(__file__), "validated_strategies.json"
+)
+
 
 class StrategyScanner:
     def __init__(self):
-        self._strategies = STRATEGY_REGISTRY
-        self._provider = YFinanceProvider()
-        self._engine = SignalEngine()
+        with open(_VALIDATED_JSON) as f:
+            validated_names = set(json.load(f).get("validated", []))
+        self._active_strategies = [
+            s for s in STRATEGY_REGISTRY if s.name in validated_names
+        ]
 
     def scan(self, ticker: str, account_size: float, risk_pct: float) -> list:
         """Evaluate all registered strategies against the latest signals for ticker.
@@ -35,11 +47,11 @@ class StrategyScanner:
         print(f"Scanning {ticker}...")
         end = datetime.today().strftime("%Y-%m-%d")
         start = (datetime.today() - timedelta(days=500)).strftime("%Y-%m-%d")
-        df = self._provider.fetch_daily(ticker, start, end)
-        snapshot = self._engine.compute(df)
+        df = YFinanceProvider().fetch_daily(ticker, start, end)
+        snapshot = SignalEngine().compute(df)
 
         results = []
-        for strategy in self._strategies:
+        for strategy in self._active_strategies:
             result = strategy.evaluate(snapshot)
             if result.verdict == "NO_TRADE":
                 continue

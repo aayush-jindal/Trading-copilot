@@ -100,6 +100,12 @@ def init_db() -> None:
     """)
 
     conn.execute("""
+        ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS account_size NUMERIC(12,2) DEFAULT 10000.00,
+            ADD COLUMN IF NOT EXISTS risk_pct      NUMERIC(5,4)  DEFAULT 0.0100
+    """)
+
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS watchlists (
             id            SERIAL PRIMARY KEY,
             user_id       INTEGER NOT NULL,
