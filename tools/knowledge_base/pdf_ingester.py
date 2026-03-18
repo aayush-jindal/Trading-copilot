@@ -17,6 +17,21 @@ from .config import (
     RESOURCES_DIR,
 )
 
+# Filename substrings that identify options books (case-insensitive match)
+OPTIONS_BOOKS = [
+    "option spread",
+    "option volatility",
+]
+
+
+def _get_book_type(source_file: str) -> str:
+    """Return 'options_strategy' if the filename matches an options book, else 'equity_ta'."""
+    lower = source_file.lower()
+    for keyword in OPTIONS_BOOKS:
+        if keyword in lower:
+            return "options_strategy"
+    return "equity_ta"
+
 
 # ── Chunking ──────────────────────────────────────────────────────────────────
 
@@ -67,6 +82,7 @@ def _upsert_chunks(
     from app.database import get_db  # lazy import — needs DATABASE_URL
 
     now = datetime.now(timezone.utc).isoformat()
+    book_type = _get_book_type(source_file)
     conn = get_db()
     try:
         for chunk_idx, (page_num, content, embedding) in enumerate(
@@ -75,11 +91,11 @@ def _upsert_chunks(
             conn.execute(
                 """
                 INSERT INTO knowledge_chunks
-                    (source_file, page_num, chunk_idx, content, embedding, created_at)
-                VALUES (%s, %s, %s, %s, %s::vector, %s)
+                    (source_file, page_num, chunk_idx, content, embedding, created_at, book_type)
+                VALUES (%s, %s, %s, %s, %s::vector, %s, %s)
                 ON CONFLICT (source_file, chunk_idx) DO NOTHING
                 """,
-                (source_file, page_num, chunk_idx, content, _vec_str(embedding), now),
+                (source_file, page_num, chunk_idx, content, _vec_str(embedding), now, book_type),
             )
         conn.commit()
     finally:

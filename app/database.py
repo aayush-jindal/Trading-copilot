@@ -235,6 +235,15 @@ def init_db() -> None:
     conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
 
     conn.execute("""
+        ALTER TABLE knowledge_chunks
+            ADD COLUMN IF NOT EXISTS book_type VARCHAR(20) DEFAULT 'equity_ta'
+    """)
+
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_book_type ON knowledge_chunks(book_type)
+    """)
+
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS knowledge_chunks (
             id          SERIAL PRIMARY KEY,
             source_file TEXT NOT NULL,

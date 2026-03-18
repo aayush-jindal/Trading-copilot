@@ -113,10 +113,15 @@ def _vec_str(embedding: list[float]) -> str:
 def retrieve_relevant_chunks(
     signals: dict,
     top_k: int = TOP_K_RETRIEVAL,
+    book_type: str | None = None,
 ) -> list[dict]:
     """Return the top-k most relevant book passages for the current signals.
 
     Each result dict has keys: source_file, page_num, content, similarity.
+
+    Args:
+        book_type: Optional filter — 'equity_ta' or 'options_strategy'.
+                   When None (default), retrieves from all books.
     """
     from app.database import get_db  # lazy import
 
@@ -128,18 +133,33 @@ def retrieve_relevant_chunks(
 
     conn = get_db()
     try:
-        rows = conn.execute(
-            """
-            SELECT source_file,
-                   page_num,
-                   content,
-                   1 - (embedding <=> %s::vector) AS similarity
-            FROM   knowledge_chunks
-            ORDER BY embedding <=> %s::vector
-            LIMIT  %s
-            """,
-            (vec_literal, vec_literal, top_k),
-        ).fetchall()
+        if book_type is not None:
+            rows = conn.execute(
+                """
+                SELECT source_file,
+                       page_num,
+                       content,
+                       1 - (embedding <=> %s::vector) AS similarity
+                FROM   knowledge_chunks
+                WHERE  book_type = %s
+                ORDER BY embedding <=> %s::vector
+                LIMIT  %s
+                """,
+                (vec_literal, book_type, vec_literal, top_k),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT source_file,
+                       page_num,
+                       content,
+                       1 - (embedding <=> %s::vector) AS similarity
+                FROM   knowledge_chunks
+                ORDER BY embedding <=> %s::vector
+                LIMIT  %s
+                """,
+                (vec_literal, vec_literal, top_k),
+            ).fetchall()
     finally:
         conn.close()
 
