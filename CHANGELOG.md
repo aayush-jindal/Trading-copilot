@@ -2,6 +2,41 @@
 
 ---
 
+## 2026-03-18 — Docs: module and function docstrings across all non-frozen files
+
+Added module-level docstrings, function/method docstrings, and inline comments
+to every Python file that was missing them (options folder excluded, frozen files
+left untouched per CLAUDE.md rules).
+
+### Modified
+- `app/config.py`: module docstring
+- `app/database.py`: module docstring
+- `app/models.py`: module docstring
+- `app/main.py`: module docstring
+- `app/dependencies.py`: module docstring
+- `app/services/auth.py`: module docstring + docstrings on all 4 functions
+- `app/services/digest.py`: module docstring listing all public functions
+- `app/routers/auth.py`: module docstring + endpoint docstrings
+- `app/routers/data.py`: module docstring + endpoint docstrings
+- `app/routers/internal.py`: module docstring + helper and endpoint docstrings
+- `app/routers/notifications.py`: module docstring + endpoint docstrings
+- `app/routers/analysis.py`: module docstring
+- `app/routers/watchlist.py`: module docstring + endpoint docstrings
+- `app/routers/strategies.py`: module docstring + helper and endpoint docstrings
+- `tests/conftest.py`: module docstring
+- `tests/test_ai_engine.py`: module docstring
+- `tests/test_synthesis_endpoint.py`: module docstring + fixture docstring
+- `tests/test_analysis_endpoint.py`: module docstring
+
+---
+
+## 2026-03-18 — Docs: trades.py comments
+
+### Modified
+- `app/routers/trades.py`: added module docstring, docstrings for all helper functions and endpoints; fixed unused `ticker_info` variable (`_`)
+
+---
+
 ## 2026-03-18 — Task 5.3: Trade exit monitoring in digest
 
 ### Modified

@@ -1,3 +1,15 @@
+"""Strategy scanner endpoints.
+
+Routes (fixed paths must come before path parameter to avoid shadowing):
+    GET   /strategies/settings       — read account size and risk %
+    PATCH /strategies/settings       — update account size and risk %
+    GET   /strategies/scan/watchlist — scan all watchlist tickers in parallel
+    GET   /strategies/{ticker}       — scan a single ticker
+
+Helper functions (_get_user_settings, _get_user_watchlist, _result_to_dict)
+are module-level so digest.py can import them directly for the cron context.
+"""
+
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -12,6 +24,7 @@ router = APIRouter(prefix="/strategies", tags=["strategies"])
 
 
 def _get_user_settings(user_id: int) -> tuple[float, float]:
+    """Return (account_size, risk_pct) for the user. Falls back to defaults if not set."""
     conn = get_db()
     row = conn.execute(
         "SELECT account_size, risk_pct FROM users WHERE id = %s",
@@ -24,6 +37,7 @@ def _get_user_settings(user_id: int) -> tuple[float, float]:
 
 
 def _get_user_watchlist(user_id: int) -> list[str]:
+    """Return list of ticker symbols from the user's watchlist, newest first."""
     conn = get_db()
     rows = conn.execute(
         "SELECT ticker_symbol FROM watchlists WHERE user_id = %s ORDER BY date_added DESC",
@@ -34,6 +48,10 @@ def _get_user_watchlist(user_id: int) -> list[str]:
 
 
 def _result_to_dict(result) -> dict:
+    """Serialise a StrategyResult to a JSON-safe dict for API responses.
+
+    Handles both single-target (target) and multi-target (target_1) strategies.
+    """
     conditions = [
         {"label": c.label, "passed": c.passed, "value": c.value, "required": c.required}
         for c in result.conditions
@@ -63,12 +81,14 @@ def _result_to_dict(result) -> dict:
 
 @router.get("/settings")
 def get_settings(user: dict = Depends(get_current_user)):
+    """Return the authenticated user's account size and risk percentage."""
     account_size, risk_pct = _get_user_settings(user["id"])
     return {"account_size": account_size, "risk_pct": risk_pct}
 
 
 @router.patch("/settings")
 def update_settings(settings: UserSettings, user: dict = Depends(get_current_user)):
+    """Update account size and risk percentage. Validates: size > 0, 0 < risk <= 5%."""
     if settings.account_size <= 0:
         raise HTTPException(status_code=422, detail="account_size must be > 0")
     if not (0 < settings.risk_pct <= 0.05):
@@ -86,6 +106,11 @@ def update_settings(settings: UserSettings, user: dict = Depends(get_current_use
 
 @router.get("/scan/watchlist")
 def scan_watchlist(user: dict = Depends(get_current_user)):
+    """Scan all watchlist tickers in parallel and return results sorted by score.
+
+    Uses ThreadPoolExecutor (max 10 workers) — safe inside a web server.
+    Skips tickers that throw errors rather than failing the whole request.
+    """
     tickers = _get_user_watchlist(user["id"])
     if not tickers:
         return []
@@ -117,6 +142,7 @@ def scan_watchlist(user: dict = Depends(get_current_user)):
 
 @router.get("/{ticker}")
 def get_strategies(ticker: str, user: dict = Depends(get_current_user)):
+    """Run all validated strategies against a single ticker and return results."""
     symbol = ticker.upper()
 
     try:

@@ -1,3 +1,10 @@
+"""Unit tests for app/services/ai_engine.py.
+
+Tests build_user_message (signal → prompt formatting),
+get_cached_narrative, and save_narrative using an in-memory SQLite DB
+with a compatibility wrapper that translates %s → ? placeholders.
+"""
+
 import sqlite3
 from unittest.mock import patch
 

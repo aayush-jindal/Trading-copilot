@@ -1,3 +1,12 @@
+"""Trading Copilot FastAPI application.
+
+Entry point for the backend API. Registers all routers, configures CORS, and
+runs database initialisation on startup via the lifespan context manager.
+
+Public routes (no JWT):  /auth/*, /internal/*
+Protected routes (JWT):  everything else
+"""
+
 import os
 from contextlib import asynccontextmanager
 

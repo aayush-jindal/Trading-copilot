@@ -1,3 +1,10 @@
+"""Pydantic request/response models for the Trading Copilot API.
+
+Defines all data shapes exchanged between the frontend and backend.
+Models are grouped by domain: user settings, market data, technical analysis
+signals, swing setup, trade tracking, and the top-level AnalysisResponse.
+"""
+
 from pydantic import BaseModel
 
 

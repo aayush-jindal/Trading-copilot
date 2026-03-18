@@ -1,3 +1,9 @@
+"""FastAPI dependency functions for authentication.
+
+Provides reusable Depends()-compatible callables that validate JWTs and
+internal bearer tokens, keeping auth logic out of individual route functions.
+"""
+
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 

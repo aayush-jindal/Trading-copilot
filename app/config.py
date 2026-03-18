@@ -1,3 +1,9 @@
+"""Application configuration.
+
+All settings are read from environment variables with safe defaults for local
+development. In production, set the variables via Docker env files or secrets.
+"""
+
 import os
 
 DATABASE_URL = os.getenv(

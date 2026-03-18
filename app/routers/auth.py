@@ -1,3 +1,9 @@
+"""Authentication endpoints.
+
+POST /auth/login    — exchange credentials for a JWT bearer token
+POST /auth/register — create a new user account and return a JWT
+"""
+
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -22,6 +28,7 @@ class RegisterRequest(BaseModel):
 
 @router.post("/login", response_model=TokenResponse)
 def login(form: OAuth2PasswordRequestForm = Depends()):
+    """Authenticate with username/password and return a JWT bearer token."""
     user = authenticate_user(form.username, form.password)
     if user is None:
         raise HTTPException(
@@ -35,6 +42,10 @@ def login(form: OAuth2PasswordRequestForm = Depends()):
 
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
 def register(body: RegisterRequest):
+    """Register a new user account. Returns a JWT on success.
+
+    Enforces: username >= 3 chars, password >= 8 chars, unique username.
+    """
     username = body.username.strip()
     if not username or len(username) < 3:
         raise HTTPException(status_code=422, detail="Username must be at least 3 characters")
