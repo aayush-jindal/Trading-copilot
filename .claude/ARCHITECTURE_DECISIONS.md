@@ -467,6 +467,357 @@ designed to keep yfinance call count low regardless of user count.
 
 ---
 
+## ADR-014 — Backtest universe, train/test split, and tuning protocol
+
+**Date:** March 2026  
+**Status:** Active
+
+### Decision
+The backtest uses a 40-ticker expanded universe across 7 categories,
+an 80/20 train/test split (2005–2021 train, 2021–2026 test), per-ticker
+start dates using `max(2005-01-01, ticker_ipo)`, a two-stage gate, and
+a structured 3-iteration tuning protocol for strategies that fail.
+
+### Why 40 tickers across 7 categories
+
+The original 18-ticker universe had three critical gaps that caused
+specific strategy failures:
+
+**Gap 1 — no volatile individual equities (caused S2 failure)**
+Large-cap ETFs and mega-caps rarely hit RSI 30 on daily bars. S2 got
+19 trades in 5 years — not enough to measure anything. Adding CRM, NFLX,
+META, SQ, SLV, USO gives the strategy stocks that actually become oversold
+on a regular basis.
+
+**Gap 2 — no 2008-2009 recovery data (caused S10 ambiguity)**
+S10 (Golden Cross Pullback) is specifically designed to catch the first
+pullback after a major bear market bottom. The 2019-2024 window had no
+meaningful bear-recovery cycle. Adding V, MA, UNH, HD and extending to
+2005 gives S10 the 2009 recovery data it was designed for.
+
+**Gap 3 — missing sectors (limited generalizability)**
+No consumer discretionary, industrials, materials, staples, REITs, or
+international exposure. Adding XLY, XLI, XLB, XLP, VNQ, EEM, EFA ensures
+strategies are tested across different economic cycle sensitivities, not
+just tech and financials.
+
+**The 40-ticker cap**
+Beyond 40 tickers, adding more names produces diminishing statistical
+returns while increasing runtime significantly. Diversity across sectors
+and volatility profiles matters more than raw count.
+
+### Why 80/20 train/test (2005–2021 / 2021–2026)
+
+**Train covers 4 distinct market regimes:**
+- 2005-2007: pre-GFC bull market
+- 2008-2009: Global Financial Crisis — most important bear market stress test
+- 2009-2019: decade-long bull market
+- 2020: COVID crash and rapid recovery
+
+**Test covers 2 distinct regimes:**
+- 2021-2022: post-COVID bull then Fed rate hike bear (different from 2008)
+- 2023-2026: AI-driven recovery and bull market continuation
+
+The test window deliberately includes a rate-driven bear market (2022)
+which is mechanically different from the credit-driven 2008 crash. A
+strategy that passes both is robust across different bear market types.
+
+### Per-ticker start dates
+
+Dropping TSLA because it starts in 2010 would lose a high-volatility
+name that is valuable for S2 and S3. The `max(2005, ipo)` rule keeps
+every ticker while being honest about available history. Tickers with
+shorter history simply contribute fewer bars — they are not penalized,
+they just have less influence on the aggregate statistics.
+
+### Two-stage gate
+
+Single-window backtesting has a well-documented problem: strategies that
+look good on the full window are often optimized to it accidentally, even
+when no explicit parameter search was done. The train/test split catches
+this. A strategy that passes train (30+ trades, E > 0) but fails test
+(20+ trades, E > 0) is either:
+- Regime-sensitive: only works in certain market conditions → "pending"
+- Curve-fitted: parameters tuned to 2005-2021 specifics → retire
+
+Test gate is lower (20 trades vs 30) because the test window is shorter.
+
+### Tuning protocol — 3-level classification, 3-iteration maximum
+
+Before any parameter is changed, classify the failure:
+
+**Level 1 — wrong universe (too few trades)**
+Signal logic is fine but market conditions for the signal are rare in
+the current universe. Fix: add more appropriate tickers. Do not change
+strategy logic until you have sufficient trades to measure.
+
+**Level 2 — parameter problem (right signal, wrong threshold)**
+Signal fires at broadly the right times but the specific entry/exit
+threshold is slightly off. Characterized by: reasonable trade count,
+win rate near 50%, expectancy near zero. Fix: one parameter at a time,
+max 3 iterations, full train re-run each time.
+
+**Level 3 — structural failure (wrong signal entirely)**
+Signal fires consistently and consistently loses. Characterized by:
+high trade count, win rate well below 50%, large negative expectancy.
+S8 StochasticCross (-2.35R on 519 trades) is the canonical example.
+No amount of parameter tuning fixes a signal that fires on noise.
+Retire immediately.
+
+### Per-strategy tuning plans (Level 2 only)
+
+**S2 RSI Mean Reversion** (if still fails after universe expansion):
+1. Tighten stop from 1.5×ATR to 1.0×ATR
+2. Add volume_ratio > 1.2× on entry bar
+3. Require RSI < 35 two bars before the cross above 30
+
+**S3 BB Squeeze** (if expectancy stays near zero):
+1. Replace bb_upper close exit with ATR trailing stop
+2. Tighten volume entry from 1.5× to 2.0×
+
+**S10 Golden Cross Pullback** (if train passes, test fails):
+1. Tighten "within 10 bars" to "within 5 bars"
+2. Add weekly SMA10 > SMA40 confirmation at entry
+
+### Hard tuning rules
+
+1. Never tune on the test set — all parameter decisions made on TRAIN only
+2. One parameter change per iteration — never change entry AND exit simultaneously
+3. Maximum 3 iterations per strategy — after 3, retire or accept as-is
+4. Each iteration requires full TRAIN re-run — no spot-checking
+5. A strategy passes only when BOTH train AND test pass their respective gates
+6. Train passes, test fails = curve fitted = retire (move to "retired") or
+   pending (move to "pending" with a note about which regime it fails in)
+7. All tuning attempts recorded in validated_strategies.json tuning_log
+   regardless of outcome — the log is the audit trail
+
+### Rejected alternatives
+
+**Single window, no split** — rejected. Any strategy optimized even
+slightly on the data it is tested on will show inflated results. The
+2019-2024 window was this problem in practice: we got strong results
+on 5 years that included one of the strongest bull markets in history.
+
+**Rolling window cross-validation** — considered. Would give more
+statistically robust results but requires 5-10× more compute and
+significantly more complex implementation. The simple 80/20 split
+catches the most important failure modes (regime sensitivity, curve
+fitting) at a fraction of the complexity.
+
+**Dropping short-history tickers** — rejected in favor of per-ticker
+start dates. Dropping TSLA, V, META, SHOP loses valuable testing data
+for specific strategies. The `max(2005, ipo)` rule is honest about
+history without excluding useful names.
+
+---
+
+---
+
+## ADR-014 — Backtest universe, train/test split, and tuning protocol
+
+**Date:** March 2026  
+**Status:** Active
+
+### Decision
+The backtest uses a 40-ticker expanded universe across 7 categories,
+an 80/20 train/test split (2005–2021 train, 2021–2026 test), per-ticker
+start dates using `max(2005-01-01, ticker_ipo)`, a two-stage gate, and
+a structured 3-iteration tuning protocol for strategies that fail.
+
+### Why 40 tickers across 7 categories
+
+The original 18-ticker universe had three critical gaps that caused
+specific strategy failures:
+
+**Gap 1 — no volatile individual equities (caused S2 failure)**
+Large-cap ETFs and mega-caps rarely hit RSI 30 on daily bars. S2 got
+19 trades in 5 years — not enough to measure anything. Adding CRM, NFLX,
+META, SQ, SLV, USO gives the strategy stocks that actually become oversold
+on a regular basis.
+
+**Gap 2 — no 2008-2009 recovery data (caused S10 ambiguity)**
+S10 (Golden Cross Pullback) is specifically designed to catch the first
+pullback after a major bear market bottom. The 2019-2024 window had no
+meaningful bear-recovery cycle. Adding V, MA, UNH, HD and extending to
+2005 gives S10 the 2009 recovery data it was designed for.
+
+**Gap 3 — missing sectors (limited generalizability)**
+No consumer discretionary, industrials, materials, staples, REITs, or
+international exposure. Adding XLY, XLI, XLB, XLP, VNQ, EEM, EFA ensures
+strategies are tested across different economic cycle sensitivities, not
+just tech and financials.
+
+**The 40-ticker cap**
+Beyond 40 tickers, adding more names produces diminishing statistical
+returns while increasing runtime significantly. Diversity across sectors
+and volatility profiles matters more than raw count.
+
+### Why 80/20 train/test (2005–2021 / 2021–2026)
+
+**Train covers 4 distinct market regimes:**
+- 2005-2007: pre-GFC bull market
+- 2008-2009: Global Financial Crisis — most important bear market stress test
+- 2009-2019: decade-long bull market
+- 2020: COVID crash and rapid recovery
+
+**Test covers 2 distinct regimes:**
+- 2021-2022: post-COVID bull then Fed rate hike bear (different from 2008)
+- 2023-2026: AI-driven recovery and bull market continuation
+
+The test window deliberately includes a rate-driven bear market (2022)
+which is mechanically different from the credit-driven 2008 crash. A
+strategy that passes both is robust across different bear market types.
+
+### Per-ticker start dates
+
+Dropping TSLA because it starts in 2010 would lose a high-volatility
+name that is valuable for S2 and S3. The `max(2005, ipo)` rule keeps
+every ticker while being honest about available history. Tickers with
+shorter history simply contribute fewer bars — they are not penalized,
+they just have less influence on the aggregate statistics.
+
+### Two-stage gate
+
+Single-window backtesting has a well-documented problem: strategies that
+look good on the full window are often optimized to it accidentally, even
+when no explicit parameter search was done. The train/test split catches
+this. A strategy that passes train (30+ trades, E > 0) but fails test
+(20+ trades, E > 0) is either:
+- Regime-sensitive: only works in certain market conditions → "pending"
+- Curve-fitted: parameters tuned to 2005-2021 specifics → retire
+
+Test gate is lower (20 trades vs 30) because the test window is shorter.
+
+### Tuning protocol — 3-level classification, 3-iteration maximum
+
+Before any parameter is changed, classify the failure:
+
+**Level 1 — wrong universe (too few trades)**
+Signal logic is fine but market conditions for the signal are rare in
+the current universe. Fix: add more appropriate tickers. Do not change
+strategy logic until you have sufficient trades to measure.
+
+**Level 2 — parameter problem (right signal, wrong threshold)**
+Signal fires at broadly the right times but the specific entry/exit
+threshold is slightly off. Characterized by: reasonable trade count,
+win rate near 50%, expectancy near zero. Fix: one parameter at a time,
+max 3 iterations, full train re-run each time.
+
+**Level 3 — structural failure (wrong signal entirely)**
+Signal fires consistently and consistently loses. Characterized by:
+high trade count, win rate well below 50%, large negative expectancy.
+S8 StochasticCross (-2.35R on 519 trades) is the canonical example.
+No amount of parameter tuning fixes a signal that fires on noise.
+Retire immediately.
+
+### Per-strategy tuning plans (Level 2 only)
+
+**S2 RSI Mean Reversion** (if still fails after universe expansion):
+1. Tighten stop from 1.5×ATR to 1.0×ATR
+2. Add volume_ratio > 1.2× on entry bar
+3. Require RSI < 35 two bars before the cross above 30
+
+**S3 BB Squeeze** (if expectancy stays near zero):
+1. Replace bb_upper close exit with ATR trailing stop
+2. Tighten volume entry from 1.5× to 2.0×
+
+**S10 Golden Cross Pullback** (if train passes, test fails):
+1. Tighten "within 10 bars" to "within 5 bars"
+2. Add weekly SMA10 > SMA40 confirmation at entry
+
+### Hard tuning rules
+
+1. Never tune on the test set — all parameter decisions made on TRAIN only
+2. One parameter change per iteration — never change entry AND exit simultaneously
+3. Maximum 3 iterations per strategy — after 3, retire or accept as-is
+4. Each iteration requires full TRAIN re-run — no spot-checking
+5. A strategy passes only when BOTH train AND test pass their respective gates
+6. Train passes, test fails = curve fitted = retire (move to "retired") or
+   pending (move to "pending" with a note about which regime it fails in)
+7. All tuning attempts recorded in validated_strategies.json tuning_log
+   regardless of outcome — the log is the audit trail
+
+### Rejected alternatives
+
+**Single window, no split** — rejected. Any strategy optimized even
+slightly on the data it is tested on will show inflated results. The
+2019-2024 window was this problem in practice: we got strong results
+on 5 years that included one of the strongest bull markets in history.
+
+**Rolling window cross-validation** — considered. Would give more
+statistically robust results but requires 5-10× more compute and
+significantly more complex implementation. The simple 80/20 split
+catches the most important failure modes (regime sensitivity, curve
+fitting) at a fraction of the complexity.
+
+**Dropping short-history tickers** — rejected in favor of per-ticker
+start dates. Dropping TSLA, V, META, SHOP loses valuable testing data
+for specific strategies. The `max(2005, ipo)` rule is honest about
+history without excluding useful names.
+
+---
+
+## ADR-015 — should_enter() and _check_conditions() must stay in sync
+
+**Date:** March 2026  
+**Status:** Active
+
+### Decision
+Every filter applied in `should_enter()` (the backtest interface) must have
+a corresponding `Condition` object in `_check_conditions()` (the scanner
+interface). The two methods must be logically equivalent. `_check_conditions()`
+must be a complete superset of every filter in `should_enter()`.
+
+### Why this rule exists
+
+Discovered during Task 2.10 (S8v2 comparison). S8's `should_enter()` already
+implemented `price > SMA200` filtering. The S8v2 comparison produced identical
+results because the condition was already active in the backtest. This revealed
+that `_check_conditions()` did not include the SMA200 condition — meaning the
+live scanner could fire S8 signals on stocks below SMA200, which the backtest
+never validated.
+
+This is the most dangerous class of inconsistency in the system: the scanner
+appears to work normally, the signals look valid, but they are operating outside
+the validated envelope. There is no runtime error to catch it.
+
+### The invariant
+
+```
+∀ condition C in should_enter():
+    ∃ matching Condition in _check_conditions()
+```
+
+In plain terms: if `should_enter()` checks it, `_check_conditions()` shows it.
+
+### How to enforce it
+
+When writing a new strategy:
+1. Write `should_enter()` first — this defines what the backtest validates
+2. Write `_check_conditions()` as an explicit listing of every check in
+   `should_enter()`, in the same order, with a Condition object for each
+3. `evaluate()` calls `_check_conditions()` — the scanner sees exactly what
+   the backtest tested
+
+When modifying an existing strategy:
+- Any change to `should_enter()` requires a matching change to `_check_conditions()`
+- These two methods are coupled. Never edit one without reviewing the other.
+
+### What to check in existing strategies
+
+When Task 2.10 Step 5 runs, audit every strategy:
+- Read `should_enter()` line by line
+- Verify each condition has a Condition object in `_check_conditions()`
+- Any gap = a hidden filter = a scanner/backtest inconsistency
+
+### Consequence for S8 specifically
+
+S8's `should_enter()` contains `price > SMA200`. This must be added as an
+explicit Condition in `_check_conditions()`. The backtest numbers are already
+correct (they already reflect the filter). Only the scanner interface needs
+updating to make the filter visible.
+
+---
 ## Open questions — not yet decided
 
 These are decisions that will need to be made as the system evolves.

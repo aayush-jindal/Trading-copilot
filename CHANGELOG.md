@@ -2,6 +2,246 @@
 
 ---
 
+## 2026-03-18 — Task 2.10: S8v2 comparison, SQLiteProvider, run_backtest SQLite-only
+
+### Added
+- `backtesting/strategies/s8v2_stochastic_sma_filter.py` — S8 variant with SMA200 uptrend gate added as the first required condition in `_check_conditions()`. Class: `StochasticSmaTrendStrategy`, name = `S8v2_StochasticSmaTrend`. Not registered in registry (see decision below).
+- `backtesting/data.py` — added `SQLiteProvider`: read-only DataProvider that reads from local SQLite cache only, no network calls. Raises `ValueError` if ticker/window not in cache. Used by all future backtest runs.
+- `backtesting/run_s8_comparison.py` — standalone comparison script: runs S8 + S8v2 across full universe (train+test) using `SQLiteProvider`, applies decision rules, writes tuning_log entry to `validated_strategies.json`.
+
+### Changed
+- `backtesting/run_backtest.py` — `_run_one()` now uses `SQLiteProvider()` instead of `YFinanceProvider`. All future backtest runs read from local SQLite cache only; no yfinance network calls during backtesting.
+- `backtesting/validated_strategies.json` — added S8v2 result + tuning_log entry; restored S8 to VALIDATED with corrected stats; restored S10 to PENDING with correct stats (Docker had stale artefact data).
+
+### S8 vs S8v2 Comparison Results (2026-03-18)
+- 80 jobs (39 tickers × 2 phases), 2 Docker workers, SQLite-only — no network calls
+- S8v2 result identical to S8 in every metric: S8 `should_enter()` already gates on `price_vs_sma200 == "above"`, so the SMA200 condition added in S8v2 is redundant
+
+| Strategy | Train | Test | Decision |
+|---|---|---|---|
+| S8_StochasticCross | 3602t WR=57.1% E=+0.166R | 1000t WR=54.2% E=+0.133R | VALIDATED (unchanged) |
+| S8v2_StochasticSmaTrend | 3602t WR=57.1% E=+0.166R | 1000t WR=54.2% E=+0.133R | NOT_REGISTERED (no improvement) |
+
+**Decision: NO_IMPROVEMENT** — S8 remains in registry. S8v2 is not registered.
+
+---
+
+## 2026-03-17 — Engine batch optimization + full backtest results
+
+### Changed
+- `backtesting/engine.py` — major performance rewrite
+  - Added `run_batch(strategies, ticker, start, end)`: fetches data once per ticker and computes `SignalSnapshot` once per bar shared across all strategies (~9× speedup vs calling `run()` separately per strategy)
+  - Added `_run_ticker_batch()`: inner loop that replays all strategies against the same pre-computed snapshot stream
+  - Extracted `_manage_trade()` and `_force_close()` helpers to eliminate code duplication
+  - Fixed rolling lookback window (`_DAILY_LOOKBACK=500`, `_WEEKLY_LOOKBACK=104`) — prevents O(n²) signal recomputation (was growing `df.iloc[:i+1]` → now fixed 500-bar window)
+  - `run()` single-strategy path kept for backward compatibility
+- `backtesting/run_backtest.py` — restructured job parallelism
+  - Jobs changed from `(strategy, ticker, phase)` → `(ticker, phase)` with all 7 strategies batched inside each job
+  - 560 jobs → 80 jobs; each job runs 7 strategies on the same ticker with shared signals
+  - Progress output now shows per-ticker completion with strategy log count
+  - Abort threshold adjusted to `n_done >= 10` (fewer jobs)
+
+### Results — Full backtest run 2026-03-17
+- 80 jobs (40 tickers × 2 phases, 7 strategies batched), 2 Docker workers
+- Total wall time: ~30 minutes (vs estimated 10+ hours before optimization)
+- 39/40 tickers processed (SQ permanently unavailable from yfinance)
+
+| Strategy | Train | Test | Verdict |
+|---|---|---|---|
+| S1_TrendPullback | 2903t WR=78.6% E=+0.109R | 685t WR=75.5% E=+0.068R | VALIDATED |
+| S2_RSIMeanReversion | 171t WR=50.3% E=+0.099R | 49t WR=59.2% E=+0.383R | VALIDATED |
+| S3_BBSqueeze | 263t WR=46.4% E=+0.032R | 70t WR=50.0% E=+0.060R | VALIDATED |
+| S7_MACDCross | 1186t WR=76.6% E=+0.365R | 338t WR=77.2% E=+0.380R | VALIDATED |
+| S8_StochasticCross | 3602t WR=57.1% E=+0.166R | 1000t WR=54.2% E=+0.133R | VALIDATED |
+| S9_EMACross | 858t WR=70.2% E=+0.105R | 247t WR=67.2% E=+0.019R | VALIDATED |
+| S10_GoldenCrossPullback | 158t WR=29.8% E=+0.012R | 40t WR=35.0% E=-0.010R | PENDING |
+
+- S8 reinstated as VALIDATED — `_stop_is_valid()` guard corrected +662R artefact to realistic +0.166R
+- S10 PENDING — test expectancy slightly negative (-0.010R), regime-sensitive
+
+### Updated
+- `backtesting/validated_strategies.json` — updated with 2026-03-17 run results; S8 VALIDATED, S10 PENDING, S10 removed from VALIDATED list
+
+---
+
+## 2026-03-16 — Cache validator, retry logic, abort-on-failure
+
+### Added
+- `backtesting/validate_cache.py` — pre-run health check script
+  - `check_db_integrity()`: SQLite `PRAGMA integrity_check` + table/column verification
+  - `prefetch_universe()`: downloads every ticker × (train, test) window, stores in cache
+  - `report()`: per-ticker row count table, flags tickers below `MIN_TRAIN_ROWS=200` / `MIN_TEST_ROWS=100`
+  - Gate: allows ≤ 3 tickers with insufficient data (newly listed / delisted); exits 0 = OK, 1 = DB corrupt, 2 = too many missing tickers
+  - Run: `python backtesting/validate_cache.py`
+
+### Modified
+- `backtesting/data.py`
+  - `_download_raw()`: retries up to 3× with 2s back-off on transient yfinance errors; returns empty DataFrame for "no data in window" (not a network error); raises `DataFetchError` only after all retries are exhausted
+  - Added `DataFetchError(RuntimeError)` — distinct error class so callers can tell data failures apart from other exceptions
+- `backtesting/run_backtest.py`
+  - Pre-flight: runs `validate_cache.py` as a subprocess; aborts (`sys.exit`) if it returns non-zero
+  - Abort-on-failure: counts failed jobs as they complete; if > 15% fail after 20+ samples, shuts down the `ProcessPoolExecutor` immediately and exits with code 3
+  - Failed jobs now print `FAIL` (not `SKIP`) and show full 70-char error
+
+---
+
+## 2026-03-16 — SQLite data cache added to backtesting
+
+### Added
+- `backtesting/cache.py` — `DataCache` class backed by SQLite (`backtesting/ohlcv.db`)
+  - Table: `ohlcv (ticker, date, interval, open, high, low, close, volume)` — PK (ticker, date, interval)
+  - WAL journal mode for safe concurrent worker reads/writes
+  - `coverage(ticker, interval)` — returns (min_date, max_date) of cached rows
+  - `load(ticker, start, end, interval)` — returns cached DataFrame
+  - `upsert(ticker, df, interval)` — INSERT OR REPLACE all rows
+
+### Modified
+- `backtesting/data.py` — `YFinanceProvider` now checks cache before yfinance
+  - On first fetch: downloads from yfinance, stores in DB
+  - On subsequent fetches: reads from DB (zero network calls)
+  - On range extension: fetches only the missing gap, appends to DB
+  - `_download_raw()` never raises — returns empty DataFrame on failure (errors logged by yfinance, not fatal)
+- `.gitignore` — added `backtesting/ohlcv.db`
+
+### Docker workflow for cache persistence
+```bash
+# Before each run: copy cached DB into container
+docker cp backtesting/ohlcv.db $(docker-compose -f docker/docker-compose.yml ps -q api):/app/backtesting/
+# (already included in: docker cp backtesting/ container:/app/)
+
+# After each run: pull updated DB back to host
+docker cp $(docker-compose -f docker/docker-compose.yml ps -q api):/app/backtesting/ohlcv.db ./backtesting/
+```
+Second and subsequent backtest runs will complete in minutes instead of hours.
+
+---
+
+## 2026-03-15 — Task 2.9 (corrected): Aggregation bug fixed, real results recorded
+
+### Bug fixed
+- `backtesting/run_backtest.py` — `_aggregate()` was using a dict comprehension on per-ticker stats, keeping only the last ticker per strategy name. Fixed with proper per-strategy aggregation (weighted expectancy by trade count across all tickers).
+
+### Corrected results (from train_results.csv / test_results.csv)
+Train / Test / Verdict:
+- S1  TrendPullback:      2912t WR=78.6% E=+0.110R /  699t WR=75.3% E=+0.060R  — **VALIDATED**
+- S2  RSIMeanReversion:    171t WR=50.3% E=+0.099R /   49t WR=59.2% E=+0.383R  — **VALIDATED**
+- S3  BBSqueeze:           258t WR=45.7% E=+0.031R /   70t WR=50.0% E=+0.060R  — **VALIDATED**
+- S7  MACDCross:          1175t WR=76.5% E=+0.359R /  329t WR=77.8% E=+0.393R  — **VALIDATED**
+- S8  StochasticCross:    3957t WR=47.2% E=+662R   / 1113t WR=44.6% E=+141R   — RETIRED (R artefact)
+- S9  EMACross:            849t WR=69.8% E=+0.169R /  247t WR=66.8% E=+0.025R  — **VALIDATED**
+- S10 GoldenCrossPullback: 160t WR=37.5% E=+1.671R /   40t WR=52.5% E=+2.430R  — **VALIDATED**
+
+### S8 retired
+- S8 expectancy is a calculation artefact: `nearest_support` occasionally sits within ticks of entry price, making `entry - stop` near-zero and inflating R values to hundreds. Actual win rate (47%) with realistic stops would yield negative expectancy. Removed from validated list.
+
+### Updated
+- `backtesting/validated_strategies.json` — 6 strategies validated, S8 retired, real trade counts recorded
+
+---
+
+## 2026-03-15 — Task 2.9 (revised): Expanded backtest — 40 tickers, train/test split
+
+### Modified
+- `backtesting/run_backtest.py` — complete rewrite: 40-ticker universe across 7 categories, 80/20 train/test split (2005→2021 train, 2021→2026 test), per-ticker IPO start dates (TSLA/META/V/SQ/SHOP/XLRE), two-stage gate (train ≥30t E>0, test ≥20t E>0), `ProcessPoolExecutor`
+- `backtesting/validated_strategies.json` — updated with train/test results, tuning classifications, tuning_log, notes
+
+### Universe (40 tickers)
+- Broad market ETFs: SPY, QQQ, IWM, DIA, EEM, EFA
+- Sector ETFs: XLF, XLK, XLE, XLV, XLY, XLI, XLB, XLP
+- Large-cap tech: AAPL, MSFT, GOOGL, AMZN, NVDA, AMD, TSLA, META, NFLX
+- Blue chips: JPM, BAC, XOM, V, MA, UNH, HD
+- Mid-cap growth: CRM, SQ, SHOP, BRK-B
+- Commodities: GLD, SLV, USO, TLT
+- Real estate: VNQ, XLRE
+
+### Train window: per-ticker max(2005-01-01, ipo) → 2021-01-01
+### Test window: 2021-01-01 → 2026-01-01
+### Jobs: 560 (7 strategies × 40 tickers × 2 phases) | Workers: 2 | Runtime: ~3.5 hours
+
+### Results — Train / Test / Verdict
+- S1  TrendPullback:         94t WR=85.1% E=+0.171R /  11t WR=72.7% E=+0.094R  — PENDING (Level 1: test window needs more equity-style tickers)
+- S2  RSIMeanReversion:       7t WR=14.3% E=-1.129R /   2t WR=0.0%  E=-1.214R  — FAILED  (Level 1: RSI<30 rarely fires in ETF-heavy universe)
+- S3  BBSqueeze:              6t WR=50.0% E=-0.076R /   1t WR=0.0%  E=-0.222R  — FAILED  (Level 1: squeeze + breakout rare in diversified universe)
+- S7  MACDCross:             37t WR=78.4% E=+0.418R /  13t WR=69.2% E=+0.283R  — PENDING (Level 1: both windows positive, test needs more tickers)
+- S8  StochasticCross:       96t WR=46.9% E=+5.083R /  24t WR=29.2% E=+3.078R  — VALIDATED (caution: high expectancy; contradicts prior 18-ticker -2.35R result)
+- S9  EMACross:              21t WR=66.7% E=+0.195R /   3t WR=33.3% E=-0.291R  — FAILED  (Level 1 borderline: 21 train trades; prior run had 117t passing)
+- S10 GoldenCrossPullback:    7t WR=28.6% E=+56.94R /   1t WR=0.0%  E=-0.923R  — FAILED  (Level 1: too few trades; +56.94R is artefact of tiny SMA50 stop)
+
+### Issues noted
+- SQ: all 14 download jobs failed (yfinance "possibly delisted") — remove from future runs
+- Low trade counts likely due to: diversified universe (bonds/REITs rarely trigger equity setups) + possible yfinance rate limiting during parallel downloads
+
+### Smoke test
+- 33/33 checks passed (run separately, app/ files unchanged)
+
+---
+
+## 2026-03-14 — Task 2.9: Full backtest run — parallelized
+
+### Modified
+- `backtesting/run_backtest.py` — complete rewrite: `ProcessPoolExecutor`, updated universe (18 tickers), all 7 strategies, per-strategy CSV export, gate summary
+- `backtesting/engine.py` — extended `_enter_kwargs` detection to include `_prev_k`, `_prev_ema9`, `_bars_since_cross` so S8/S9/S10 receive correct per-ticker state
+
+### Added
+- `backtesting/validated_strategies.json` — strategies passing gate recorded with real numbers
+
+### Performance
+- Jobs: 126 (7 strategies × 18 tickers)
+- Workers: 2 Docker CPUs
+- Window: 2019-01-01 to 2024-01-01
+
+### Results
+- S1_TrendPullback:        307 trades  WR=79.2%  E=+0.1034R  — **PASS**
+- S2_RSIMeanReversion:      19 trades  WR=50.0%  E=-0.0581R  — FAIL (< 30 trades)
+- S3_BBSqueeze:             32 trades  WR=58.3%  E=+0.1066R  — **PASS**
+- S7_MACDCross:            124 trades  WR=76.7%  E=+0.4076R  — **PASS**
+- S8_StochasticCross:      519 trades  WR=42.5%  E=-2.3476R  — FAIL (negative expectancy)
+- S9_EMACross:             117 trades  WR=73.9%  E=+0.2197R  — **PASS**
+- S10_GoldenCrossPullback:  20 trades  WR=31.9%  E=+1.8312R  — FAIL (< 30 trades)
+
+### Smoke test
+- 33/33 checks passed
+
+---
+
+## 2026-03-14 — Task 2.8: S8, S9, S10 strategies built
+
+### Added
+- `backtesting/strategies/s8_stochastic_cross.py` — `StochasticCrossStrategy` (`type = "reversion"`)
+- `backtesting/strategies/s9_ema_cross.py` — `EMACrossStrategy` (`type = "trend"`)
+- `backtesting/strategies/s10_golden_cross_pullback.py` — `GoldenCrossPullbackStrategy` (`type = "trend"`)
+
+### Modified
+- `backtesting/strategies/registry.py` — S8, S9, S10 registered (registry now has 7 strategies)
+
+### Verified
+```
+Registry has 7 strategies
+  S8_StochasticCross: NO_TRADE score=33
+  S9_EMACross: WATCH score=50
+  S10_GoldenCrossPullback: WATCH score=50
+2.8 ok
+```
+
+---
+
+## 2026-03-14 — Task 2.7: S7 MACDCrossStrategy built
+
+### Added
+- `backtesting/strategies/s7_macd_cross.py` — `MACDCrossStrategy` (`type = "trend"`, 4 conditions: MACD bullish crossover, SMA200, RSI 40-60, weekly BULLISH)
+
+### Modified
+- `backtesting/strategies/registry.py` — S7 registered (registry now has 4 strategies)
+
+### Verified
+```
+S7_MACDCross: NO_TRADE score=25
+Registry size: 4
+2.7 ok
+```
+
+---
+
 ## 2026-03-14 — Task 2.6: S3 BBSqueezeStrategy upgraded with factory pattern
 
 ### Modified

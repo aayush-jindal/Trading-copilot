@@ -38,6 +38,7 @@ class StrategyResult:
     conditions: list                   # list[Condition]
     risk: Any = None                   # RiskLevels | None
     strategy_instance: Any = None      # for scanner use
+    ticker: str | None = None          # set by scanner on watchlist results
 
 
 @dataclass
@@ -124,6 +125,20 @@ class BaseStrategy(ABC):
         else:
             verdict = "NO_TRADE"
         return verdict, score
+
+    @staticmethod
+    def _stop_is_valid(entry_price: float, stop_loss: float, atr: float) -> bool:
+        """Guard against near-zero risk denominator (stop bug).
+
+        Returns False when stop is within 0.5×ATR of entry in either direction.
+        Strategies must call this in _compute_risk() and return None if False.
+
+        Root cause: nearest_support or SMA-based stops sometimes land within
+        cents of entry (or above it), collapsing the R denominator and producing
+        pnl_r values in the hundreds or thousands.
+        Identified in backtest analysis: S8 (177 outliers), S10 (9), S9 (2).
+        """
+        return abs(entry_price - stop_loss) >= 0.5 * atr
 
     def describe(self) -> str:
         return f"Strategy: {self.name or self.__class__.__name__}"
