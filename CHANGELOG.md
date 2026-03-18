@@ -2,6 +2,40 @@
 
 ---
 
+## 2026-03-18 — Task 5.3: Trade exit monitoring in digest
+
+### Modified
+- `app/services/digest.py`: added `generate_trade_alerts(user_id: int) -> str`
+  - Fetches all open trades for user from DB (same `get_db()` pattern as rest of digest.py)
+  - For each trade: fetches live price via `get_or_refresh_data()`; computes alert
+  - Alert thresholds: `price <= stop * 1.02` → "⚠ approaching stop"; `price >= target * 0.98` → "✓ at target"
+  - Returns formatted plain text or empty string if no alerts
+  - Does not send notifications (digest handles that)
+
+---
+
+## 2026-03-18 — Task 5.2: Trades router
+
+### Added
+- `app/routers/trades.py`: three endpoints under `/trades` prefix (JWT-protected)
+  - `POST /trades/` — logs a trade, fetches live price, returns `current_r` and `exit_alert`
+  - `GET /trades/` — lists all open trades for current user with live `current_r` and `exit_alert`
+  - `DELETE /trades/{id}` — closes a trade (403 if not owner), records `exit_price` and `exit_date`
+  - Alert thresholds: `current_price <= stop * 1.02` → APPROACHING_STOP; `current_price >= target * 0.98` → AT_TARGET
+
+### Modified
+- `app/main.py`: imported and registered `trades.router` under JWT auth
+
+---
+
+## 2026-03-18 — Task 5.1: open_trades table
+
+### Modified
+- `app/database.py`: added `open_trades` table (id, user_id, ticker, strategy_name, strategy_type, entry_price, stop_loss, target, shares, entry_date, risk_reward, status, exit_price, exit_date, exit_reason, created_at) with `idx_open_trades_user` partial index on `(user_id) WHERE status = 'open'`
+- `app/models.py`: added `TradeCreate` and `TradeResponse` Pydantic models
+
+---
+
 ## 2026-03-18 — Task 4.3: Morning briefing upgraded with strategy setups
 
 ### Modified

@@ -203,6 +203,32 @@ class FourHConfirmation(BaseModel):
     four_h_reversal_name: str | None = None
 
 
+class TradeCreate(BaseModel):
+    ticker: str
+    strategy_name: str
+    strategy_type: str
+    entry_price: float
+    stop_loss: float
+    target: float
+    shares: int
+    risk_reward: float | None = None
+
+
+class TradeResponse(BaseModel):
+    id: int
+    ticker: str
+    strategy_name: str
+    strategy_type: str
+    entry_price: float
+    stop_loss: float
+    target: float
+    shares: int
+    entry_date: str
+    current_price: float | None = None
+    current_r: float | None = None
+    exit_alert: str | None = None
+
+
 class AnalysisResponse(BaseModel):
     ticker: str
     price: float
