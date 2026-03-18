@@ -2,6 +2,42 @@
 
 ---
 
+## 2026-03-18 — Task 4.3: Morning briefing upgraded with strategy setups
+
+### Modified
+- `app/services/digest.py`: added `generate_strategy_briefing(user_id: int) -> str`
+  - Imports `_get_user_watchlist`, `_get_user_settings` from `app.routers.strategies` (module-level helpers, same DB pattern as rest of digest.py)
+  - Parallel scan via `ThreadPoolExecutor(max_workers=min(tickers, 10))` — same pattern as `/scan/watchlist`
+  - Filters to `verdict == "ENTRY"` only, sorted by score descending
+  - Returns formatted plain text with entry/stop/target/R:R and position size per setup
+  - Returns empty string gracefully when watchlist empty or no ENTRY setups
+  - Existing `generate_digest_for_user`, `save_digest_notification`, `run_nightly_refresh` unchanged
+
+---
+
+## 2026-03-18 — Task 4.2: strategy_gen.py returns JSON + equity filter
+
+### Modified
+- `tools/knowledge_base/strategy_gen.py`:
+  - `_SYSTEM_PROMPT` replaced: now instructs Claude to return ONLY a JSON object with schema `{strategies, best_opportunity, signals_to_watch}`. No price fields (entry_zone, stop_loss, target) — those are computed by the scanner per ADR-005.
+  - `generate_strategies()` return type changed `str → dict`: passes `book_type="equity_ta"` to `retrieve_relevant_chunks()`, parses response with `json.loads()`
+  - Options book passages no longer included in RAG retrieval for equity strategy generation
+
+---
+
+## 2026-03-18 — Task 4.1: book_type column + retrieval filter
+
+### Modified
+- `app/database.py`: `ALTER TABLE knowledge_chunks ADD COLUMN IF NOT EXISTS book_type VARCHAR(20) DEFAULT 'equity_ta'` + `CREATE INDEX IF NOT EXISTS idx_book_type`
+- `tools/knowledge_base/pdf_ingester.py`: added `OPTIONS_BOOKS` list + `_get_book_type()` helper; `_upsert_chunks()` now passes `book_type` into INSERT
+- `tools/knowledge_base/retriever.py`: `retrieve_relevant_chunks()` accepts optional `book_type: str | None = None`; adds `WHERE book_type = %s` when set, default behaviour unchanged
+
+### Data
+- Path A applied: 449 existing `Option Spread Strategies` chunks tagged as `options_strategy`
+- Distribution: `equity_ta` 8214 chunks, `options_strategy` 449 chunks
+
+---
+
 ## 2026-03-18 — Tasks 3.3 / 3.4 / 3.5: strategies router
 
 ### Added

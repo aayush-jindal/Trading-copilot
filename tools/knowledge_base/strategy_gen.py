@@ -23,33 +23,39 @@ You are a professional trading strategist with deep knowledge of technical analy
 
 You have been given two inputs:
 1. LIVE MARKET SIGNALS — current technical data for a specific stock.
-2. KNOWLEDGE BASE PASSAGES — excerpts retrieved from technical analysis books that are \
+2. KNOWLEDGE BASE PASSAGES — excerpts retrieved from equity technical analysis books that are \
 semantically relevant to the current market conditions.
 
-Your task is to synthesize these into concrete, actionable trading strategies.
+Your task is to synthesize these into a JSON response. Return ONLY valid JSON — no markdown, \
+no prose outside the JSON object.
 
-Structure your response exactly as follows:
-
-## Applicable Strategies
-For each distinct strategy you identify from the knowledge base passages:
-- **Strategy name** (from the book context, if identifiable)
-- Conditions status: MET / PARTIAL / NOT MET — based on the live signals
-- If MET or PARTIAL: specific entry zone, stop-loss level, and price target using the \
-actual numbers from the signals
-- Source: which book passage supports this strategy
-
-## Best Current Opportunity
-One paragraph recommending the single strongest setup right now, with full reasoning. \
-Include exact entry, stop, and target prices.
-
-## Signals to Watch
-Bullet list of what to monitor for the thesis to develop, strengthen, or fail.
+Return exactly this structure:
+{
+  "strategies": [
+    {
+      "name": "string — strategy name from the book context",
+      "conditions_status": "MET | PARTIAL | NOT MET",
+      "conditions_detail": "string — which conditions are met and why, referencing the live signals",
+      "conviction": "HIGH | MEDIUM | LOW",
+      "sources": [{"book": "string", "page": 0, "rule": "string — specific rule or principle cited"}],
+      "confirmation_signals": ["string — what else to look for before entering"],
+      "invalidation_signals": ["string — what would make this setup fail"]
+    }
+  ],
+  "best_opportunity": {
+    "strategy_name": "string",
+    "rationale": "string — why this is the strongest setup right now",
+    "conviction": "HIGH | MEDIUM | LOW"
+  },
+  "signals_to_watch": ["string — key levels or conditions to monitor"]
+}
 
 Rules:
-- Ground every recommendation in the retrieved passages — cite what you found in the books.
-- Use exact numbers from the live signals (RSI value, price, support/resistance levels, etc.).
+- Return ONLY the JSON object. No text before or after it.
+- Ground every strategy in the retrieved passages — cite book and page in sources.
+- Do not include entry_zone, stop_loss, or target price fields — those are computed elsewhere.
 - Do not invent strategies not supported by the retrieved passages.
-- Tone: direct, factual, no hedging phrases.\
+- If no strategies apply, return strategies as an empty array and best_opportunity as null.\
 """
 
 
@@ -132,24 +138,25 @@ def _format_passages(chunks: list[dict]) -> str:
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
-def generate_strategies(ticker: str, top_k: int = TOP_K_RETRIEVAL) -> str:
-    """Full RAG pipeline: signals → retrieve → Claude → strategy output.
+def generate_strategies(ticker: str, top_k: int = TOP_K_RETRIEVAL) -> dict:
+    """Full RAG pipeline: signals → retrieve (equity_ta only) → Claude → JSON dict.
 
     Args:
         ticker: Stock symbol, e.g. "AAPL".
         top_k:  Number of book passages to retrieve.
 
     Returns:
-        Formatted strategy narrative as a string.
+        Parsed JSON dict with keys: strategies, best_opportunity, signals_to_watch.
     """
+    import json  # noqa: PLC0415
     from tools.pdf_strategy_pipeline.market_connector import get_live_signals  # lazy
     from .retriever import retrieve_relevant_chunks  # local
 
     print(f"  Fetching live signals for {ticker.upper()}…")
     signals = get_live_signals(ticker)
 
-    print(f"  Retrieving top {top_k} relevant book passages…")
-    chunks = retrieve_relevant_chunks(signals, top_k=top_k)
+    print(f"  Retrieving top {top_k} equity_ta passages…")
+    chunks = retrieve_relevant_chunks(signals, top_k=top_k, book_type="equity_ta")
     print(f"  Retrieved {len(chunks)} passages.")
 
     user_message = "\n\n".join([
@@ -166,4 +173,5 @@ def generate_strategies(ticker: str, top_k: int = TOP_K_RETRIEVAL) -> str:
         system=_SYSTEM_PROMPT,
         messages=[{"role": "user", "content": user_message}],
     )
-    return response.content[0].text.strip()
+    raw = response.content[0].text.strip()
+    return json.loads(raw)

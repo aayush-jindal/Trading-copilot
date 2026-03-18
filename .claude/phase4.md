@@ -5,8 +5,11 @@ Confirm phase3.md complete checklist is fully checked off.
 GET /strategies/scan/watchlist must be working before this phase.
 
 ## Gate to advance to Phase 5
-- strategy_gen.py returns JSON not markdown
-- Morning briefing fires on cron and includes scanner results
+- strategy_gen.py returns valid JSON dict matching the schema (no price fields)
+- retrieve_relevant_chunks() filters correctly by book_type
+- generate_strategy_briefing(user_id, db) returns non-empty string for a
+  user with a watchlist when at least one ENTRY setup is firing
+- Morning briefing cron job output includes the strategy section
 - `python -m pytest tests/` still passes
 
 ---
@@ -46,6 +49,29 @@ MODIFY: tools/knowledge_base/retriever.py
   Add WHERE book_type = %s clause ONLY when book_type is not None.
   Default behaviour (book_type=None) unchanged — retrieves from all books.
 
+HANDLING EXISTING DATA:
+  If knowledge_chunks table already has rows, the ALTER TABLE will add the
+  column with DEFAULT 'equity_ta' — correct for most rows. Options book
+  chunks still need to be tagged. Two paths:
+
+  Path A (fast, no re-ingest): run after ALTER TABLE:
+  ```sql
+  UPDATE knowledge_chunks
+  SET book_type = 'options_strategy'
+  WHERE source_file ILIKE '%option%spread%'
+     OR source_file ILIKE '%option%volatility%';
+  ```
+  Verify the UPDATE hit the right rows before committing.
+
+  Path B (clean, re-ingest from scratch):
+  ```bash
+  docker compose exec db psql -U postgres -c "TRUNCATE knowledge_chunks;"
+  python tools/knowledge_base/pdf_ingester.py
+  ```
+  Takes longer but guarantees all chunks have correct book_type from source.
+
+  Use Path A if ingestion is slow. Use Path B if in doubt.
+
 DO NOT change any other retrieval logic.
 
 VERIFY:
@@ -83,15 +109,11 @@ New system prompt instructs Claude to return ONLY this JSON:
   "strategies": [{
     "name": "string",
     "conditions_status": "MET | PARTIAL | NOT MET",
-    "conditions_detail": "string",
-    "entry_zone": {"low": 0.0, "high": 0.0},
-    "stop_loss": 0.0,
-    "targets": {"tp1": 0.0, "tp2": 0.0},
-    "risk_reward": 0.0,
+    "conditions_detail": "string — explain which conditions are met and why",
     "conviction": "HIGH | MEDIUM | LOW",
     "sources": [{"book": "string", "page": 0, "rule": "string"}],
-    "confirmation_signals": ["string"],
-    "invalidation_signals": ["string"]
+    "confirmation_signals": ["string — what else to look for before entering"],
+    "invalidation_signals": ["string — what would make this setup fail"]
   }],
   "best_opportunity": {
     "strategy_name": "string",
@@ -102,8 +124,10 @@ New system prompt instructs Claude to return ONLY this JSON:
 }
 ```
 
-Update generate_strategies() to return dict, not string.
-Parse the JSON response. Return dict.
+Note: no entry_zone, stop_loss, or target price fields. Those are computed
+by the scanner (ADR-005: RAG is explainer not decision-maker). The scanner
+already produces entry/stop/target in RiskLevels. RAG explains WHY the setup
+is valid and what the books say about it — it does not reproduce the math.
 
 DO NOT touch retriever.py beyond Task 4.1 change.
 
@@ -125,36 +149,105 @@ CHANGELOG:
 ## Task 4.3 — Upgrade morning briefing (digest.py)
 
 READS FIRST:
-- app/services/digest.py (FULL FILE)
-- app/routers/strategies.py (scan/watchlist endpoint from phase 3)
+- app/services/digest.py (FULL FILE — understand how existing functions
+  get their DB connection. Follow the SAME pattern exactly.)
+- app/routers/strategies.py (FULL FILE — find the exact names of the
+  watchlist and settings helper functions before writing any imports.
+  They may be _get_user_watchlist/_get_user_settings or named differently
+  if inlined. Confirm before importing.)
 - app/services/market_data.py (understand data shape)
 
 GOAL:
-Upgrade digest.py to include strategy scanner results in the briefing.
-The briefing now has three sections:
-  1. Strategy setups firing today (from scanner)
-  2. Open trade status (from open_trades table — will be empty until phase 5)
-  3. Market context (existing narrative — unchanged)
+Add generate_strategy_briefing(user_id: int) -> str to digest.py.
+Uses the same parallel scan pattern built in Phase 3 Task 3.4.
+Open trade status is NOT included here — that is added in Phase 5.
+
+IMPORTANT — DB connection in cron context:
+digest.py is called from a cron job, NOT from a FastAPI request.
+FastAPI's Depends(get_db) is not available here.
+Look at how existing digest.py functions get their DB connection.
+generate_strategy_briefing must follow the SAME pattern — do not
+add a db parameter to the function signature.
+
+IMPORTANT — helper function names:
+Read app/routers/strategies.py before writing any import statements.
+Confirm the exact names of the watchlist and settings helper functions.
+If they are module-level functions, import them.
+If they are inlined inside route functions, extract the DB query logic
+directly in digest.py following the same SQL pattern.
 
 MODIFY: app/services/digest.py
 
-Add function: generate_strategy_briefing(user_id) -> str
-  1. Fetch user's watchlist
-  2. Fetch user's account_size and risk_pct
-  3. Run StrategyScanner.scan() on each watchlist ticker
-  4. Filter to ENTRY verdicts only for the briefing
-  5. Format as plain text:
-     "STRATEGY SETUPS — [date]\n"
-     For each ENTRY result:
-       "[TICKER] [strategy name] — Score [X]/100\n"
-       "  Entry: $X.XX  Stop: $X.XX  Target: $X.XX  R:R: X.Xx\n"
-       "  Shares: X (based on $X account, X% risk)\n"
+Add function: generate_strategy_briefing(user_id: int) -> str
 
-Do NOT call Claude or RAG in this function. Plain text only.
-Claude narrative is separate and already exists in digest.py.
+```python
+def generate_strategy_briefing(user_id: int) -> str:
+    """
+    Scan user's watchlist for ENTRY setups. Returns formatted plain text.
+    Uses parallel ThreadPoolExecutor — same pattern as /scan/watchlist endpoint.
+    Returns empty string if watchlist is empty or no ENTRY setups found.
+    DB connection follows same pattern as rest of digest.py.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from backtesting.scanner import StrategyScanner
+    # Import helper functions from strategies.py if they are module-level.
+    # If not, replicate the DB query following digest.py's existing DB pattern.
+    # READ strategies.py FIRST to determine which applies.
 
-The existing digest generation logic must remain unchanged.
-This function is additive — called alongside existing logic.
+    # Get watchlist and settings using digest.py's DB pattern (not FastAPI Depends)
+    # ...fetch tickers and account_size/risk_pct...
+
+    if not tickers:
+        return ""
+
+    scanner = StrategyScanner()
+    all_results = []
+
+    def _scan_one(ticker):
+        try:
+            results = scanner.scan(ticker, account_size, risk_pct)
+            for r in results:
+                r.ticker = ticker
+            return results
+        except Exception:
+            return []
+
+    with ThreadPoolExecutor(max_workers=min(len(tickers), 10)) as pool:
+        for future in as_completed(pool.submit(_scan_one, t) for t in tickers):
+            all_results.extend(future.result())
+
+    entries = [r for r in all_results if r.verdict == "ENTRY"]
+    entries.sort(key=lambda r: r.score, reverse=True)
+
+    if not entries:
+        return ""
+
+    from datetime import date
+    lines = [f"STRATEGY SETUPS — {date.today()}", ""]
+    for r in entries:
+        lines.append(f"{r.ticker}  {r.name} — Score {r.score}/100")
+        if r.risk:
+            lines.append(
+                f"  Entry: ${r.risk.entry_price:.2f}  "
+                f"Stop: ${r.risk.stop_loss:.2f}  "
+                f"Target: ${r.risk.target:.2f}  "
+                f"R:R: {r.risk.risk_reward:.1f}x"
+            )
+            if r.risk.position_size:
+                lines.append(
+                    f"  Shares: {r.risk.position_size} "
+                    f"(${account_size:,.0f} account, {risk_pct:.0%} risk)"
+                )
+        lines.append("")
+
+    return "\n".join(lines)
+```
+
+The existing digest generation logic must remain completely unchanged.
+This function is additive — called alongside existing logic in the cron job.
+
+DO NOT add open trade status here. That section is added in Phase 5
+when the open_trades table exists.
 
 VERIFY:
 ```python
@@ -177,9 +270,15 @@ CHANGELOG:
 ## Phase 4 complete checklist
 
 - [ ] knowledge_chunks has book_type column with data
+- [ ] Both equity_ta and options_strategy rows present in knowledge_chunks
 - [ ] retrieve_relevant_chunks() accepts optional book_type filter
 - [ ] strategy_gen.py returns dict not string
-- [ ] generate_strategy_briefing() produces plain text with ENTRY setups
+- [ ] strategy_gen.py JSON schema has no price fields (entry_zone, stop_loss, targets removed)
+- [ ] generate_strategy_briefing(user_id, db) uses parallel scan (ThreadPoolExecutor)
+- [ ] generate_strategy_briefing imports _get_user_watchlist, _get_user_settings from strategies.py
+- [ ] generate_strategy_briefing returns empty string gracefully when no ENTRY setups
+- [ ] Open trade status NOT in generate_strategy_briefing (Phase 5 adds it)
+- [ ] Existing digest logic unchanged
 - [ ] `python -m pytest tests/` still passes
 - [ ] `python scripts/smoke_test.py` passes
 - [ ] All existing routes return same responses as before

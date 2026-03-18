@@ -62,6 +62,66 @@ def save_digest_notification(user_id: int, digest: dict) -> None:
     conn.close()
 
 
+def generate_strategy_briefing(user_id: int) -> str:
+    """
+    Scan user's watchlist for ENTRY setups. Returns formatted plain text.
+    Uses parallel ThreadPoolExecutor — same pattern as /scan/watchlist endpoint.
+    Returns empty string if watchlist is empty or no ENTRY setups found.
+    DB connection follows same pattern as rest of digest.py.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from backtesting.scanner import StrategyScanner
+    from app.routers.strategies import _get_user_watchlist, _get_user_settings
+
+    tickers = _get_user_watchlist(user_id)
+    if not tickers:
+        return ""
+
+    account_size, risk_pct = _get_user_settings(user_id)
+    scanner = StrategyScanner()
+    all_results = []
+
+    def _scan_one(ticker):
+        try:
+            results = scanner.scan(ticker, account_size, risk_pct)
+            for r in results:
+                r.ticker = ticker
+            return results
+        except Exception:
+            return []
+
+    with ThreadPoolExecutor(max_workers=min(len(tickers), 10)) as pool:
+        for future in as_completed(pool.submit(_scan_one, t) for t in tickers):
+            all_results.extend(future.result())
+
+    entries = [r for r in all_results if r.verdict == "ENTRY"]
+    entries.sort(key=lambda r: r.score, reverse=True)
+
+    if not entries:
+        return ""
+
+    from datetime import date
+    lines = [f"STRATEGY SETUPS — {date.today()}", ""]
+    for r in entries:
+        lines.append(f"{r.ticker}  {r.name} — Score {r.score}/100")
+        if r.risk:
+            target = getattr(r.risk, "target", None) or getattr(r.risk, "target_1", None)
+            lines.append(
+                f"  Entry: ${r.risk.entry_price:.2f}  "
+                f"Stop: ${r.risk.stop_loss:.2f}  "
+                f"Target: ${target:.2f}  "
+                f"R:R: {r.risk.risk_reward:.1f}x"
+            )
+            if r.risk.position_size:
+                lines.append(
+                    f"  Shares: {r.risk.position_size} "
+                    f"(${account_size:,.0f} account, {risk_pct:.0%} risk)"
+                )
+        lines.append("")
+
+    return "\n".join(lines)
+
+
 def run_nightly_refresh() -> dict:
     """
     1. Collect all unique watchlisted tickers
