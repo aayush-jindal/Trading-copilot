@@ -105,3 +105,6 @@ logs/
 
 # Backtesting output
 backtest_results/
+
+# Backtesting data cache (large binary, keep locally)
+backtesting/ohlcv.db

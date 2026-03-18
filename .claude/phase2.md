@@ -677,7 +677,7 @@ CHANGELOG:
 
 ---
 
-## Task 2.9 — Run full backtest across all strategies (parallelized)
+## Task 2.9 — Run full backtest: expanded universe + train/test split (parallelized)
 
 READS FIRST:
 - backtesting/run_backtest.py (existing from Phase 1)
@@ -685,156 +685,585 @@ READS FIRST:
 - backtesting/engine.py (understand what state BacktestEngine holds)
 
 GOAL:
-Run all strategies across the full universe in parallel.
-Each (strategy, ticker) pair is an independent job — no shared state.
-Use Python's concurrent.futures.ProcessPoolExecutor to run them.
+Run all strategies across the expanded 40-ticker universe using a proper
+80/20 train/test split. Parallel execution via ProcessPoolExecutor.
+Two-stage gate: strategy must pass on BOTH train and test to be validated.
 
-Why ProcessPoolExecutor not ThreadPoolExecutor:
-  ta_engine and pandas computations are CPU-bound and release the GIL
-  inconsistently. Processes avoid GIL contention entirely.
-  Each worker gets its own memory space — no shared state bugs.
+---
 
-Why NOT async here:
-  yfinance.download() and ta-lib computations are CPU-bound, not I/O-bound.
-  asyncio would not help — it only parallelizes waiting, not computing.
+### Universe — 40 tickers across 7 categories
 
-Universe:
-["SPY","QQQ","AAPL","MSFT","GOOGL","AMZN","NVDA","TSLA","AMD",
- "JPM","BAC","XLF","XLK","XLE","XLV","GLD","IWM","TLT"]
+```python
+UNIVERSE = [
+    # Broad market ETFs
+    "SPY", "QQQ", "IWM", "DIA", "EEM", "EFA",
+    # Sector ETFs (all 1998+)
+    "XLF", "XLK", "XLE", "XLV", "XLY", "XLI", "XLB", "XLP",
+    # Large-cap tech (includes TSLA — starts from 2010 naturally)
+    "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "AMD", "TSLA", "META", "NFLX",
+    # Large-cap blue chips (S10 golden cross candidates)
+    "JPM", "BAC", "XOM", "V", "MA", "UNH", "HD",
+    # Mid-cap volatile growth (S2 RSI fix)
+    "CRM", "SQ", "SHOP", "BRK-B",
+    # Commodities
+    "GLD", "SLV", "USO", "TLT",
+    # Real estate
+    "VNQ", "XLRE",
+]
+```
 
-Window: 2019-01-01 to 2024-01-01
+Why each category exists — see ARCHITECTURE_DECISIONS.md ADR-014.
 
-MODIFY: backtesting/run_backtest.py
+---
 
-Structure:
+### Train/test split
+
+```python
+TRAIN_START = "2005-01-01"
+TRAIN_END   = "2021-01-01"   # 16 years — 80%
+TEST_START  = "2021-01-01"
+TEST_END    = "2026-01-01"   # 5 years  — 20%
+```
+
+Per-ticker window rule:
+  Each ticker uses max(TRAIN_START, ticker_first_available_date).
+  TSLA available 2010-06-29 → train starts 2010-06-29, not 2005.
+  SHOP available 2015-09-25 → train starts 2015-09-25.
+  Shorter history = fewer bars contributed, not excluded.
+
+Two-stage gate:
+  TRAIN gate: total_trades >= 30 AND expectancy > 0
+  TEST gate:  total_trades >= 20 AND expectancy > 0
+  BOTH must pass → "validated"
+  Train passes, test fails → "pending" (likely regime-sensitive)
+  Train fails → classify as Level 1/2/3 per tuning plan
+
+---
+
+### Code structure
+
 ```python
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import multiprocessing
 
+# Per-ticker start dates — use max(TRAIN_START, ticker_ipo)
+TICKER_STARTS = {
+    "TSLA":  "2010-06-29",
+    "META":  "2012-05-18",
+    "V":     "2008-03-19",
+    "SQ":    "2015-11-19",
+    "SHOP":  "2015-05-21",
+    "XLRE":  "2015-10-08",
+    # all others default to TRAIN_START = "2005-01-01"
+}
+
+def _get_start(ticker: str, phase: str) -> str:
+    """Return correct start date for this ticker and phase."""
+    if phase == "train":
+        default = TRAIN_START
+        return max(TICKER_STARTS.get(ticker, default), default)
+    else:
+        return TEST_START
+
 def _run_one(args: tuple) -> dict:
-    """Worker function — runs one strategy on one ticker.
-    Must be a top-level function (not a method) for pickling.
-    Returns dict with strategy_name, ticker, and TradeLog result.
+    """Worker — runs one strategy on one ticker for one phase.
+    Top-level function required for pickle compatibility.
     """
-    strategy_class, ticker, start, end = args
-    # Instantiate strategy fresh in each worker — avoids shared state
+    strategy_class, ticker, start, end, phase = args
     strategy = strategy_class()
     engine = BacktestEngine()
     try:
         logs = engine.run(strategy, [ticker], start, end)
-        return {"strategy": strategy.name, "ticker": ticker,
-                "log": logs[0] if logs else None, "error": None}
+        return {
+            "strategy": strategy.name, "ticker": ticker,
+            "phase": phase, "log": logs[0] if logs else None,
+            "error": None
+        }
     except Exception as e:
-        return {"strategy": strategy.name, "ticker": ticker,
-                "log": None, "error": str(e)}
+        return {
+            "strategy": strategy.name, "ticker": ticker,
+            "phase": phase, "log": None, "error": str(e)
+        }
 
 if __name__ == "__main__":
-    # IMPORTANT: __main__ guard required for ProcessPoolExecutor on macOS/Windows
     from backtesting.strategies.registry import STRATEGY_REGISTRY
 
-    UNIVERSE = [...]
-    START, END = "2019-01-01", "2024-01-01"
-    MAX_WORKERS = min(multiprocessing.cpu_count(), 8)  # cap at 8
+    MAX_WORKERS = min(multiprocessing.cpu_count(), 8)
 
-    # Build job list: one per (strategy, ticker) pair
-    jobs = [
-        (type(s), ticker, START, END)
-        for s in STRATEGY_REGISTRY
-        for ticker in UNIVERSE
-    ]
+    # Build jobs for both phases
+    jobs = []
+    for s in STRATEGY_REGISTRY:
+        for ticker in UNIVERSE:
+            # TRAIN job
+            start = _get_start(ticker, "train")
+            jobs.append((type(s), ticker, start, TRAIN_END, "train"))
+            # TEST job
+            jobs.append((type(s), ticker, TEST_START, TEST_END, "test"))
 
-    all_logs = []
-    failed = []
+    train_logs, test_logs = [], []
+    print(f"Running {len(jobs)} jobs ({MAX_WORKERS} workers)...")
 
-    print(f"Running {len(jobs)} jobs across {MAX_WORKERS} workers...")
     with ProcessPoolExecutor(max_workers=MAX_WORKERS) as executor:
         futures = {executor.submit(_run_one, job): job for job in jobs}
         for future in as_completed(futures):
-            result = future.result()
-            if result["error"]:
-                failed.append(result)
-                print(f"  SKIP {result['strategy']} {result['ticker']}: {result['error']}")
-            elif result["log"]:
-                all_logs.append(result["log"])
+            r = future.result()
+            if r["error"]:
+                print(f"  SKIP {r['strategy']} {r['ticker']} [{r['phase']}]: {r['error']}")
+            elif r["log"]:
+                if r["phase"] == "train":
+                    train_logs.append(r["log"])
+                else:
+                    test_logs.append(r["log"])
 
-    # Analyse results per strategy
-    analyzer = ResultsAnalyzer(all_logs)
-    analyzer.summary()
-    analyzer.to_csv("backtest_results/all_results.csv")
+    # Analyse each phase separately
+    train_analyzer = ResultsAnalyzer(train_logs)
+    test_analyzer  = ResultsAnalyzer(test_logs)
 
-    # Print gate status
-    stats = analyzer.compute()
-    for s in sorted(stats, key=lambda x: x.strategy_name):
-        status = "PASS" if analyzer.passes_gate(s) else "FAIL"
-        print(f"{s.strategy_name:30s} {s.total_trades:4d} trades  "
-              f"WR={s.win_rate:.1%}  E={s.expectancy:.3f}R  [{status}]")
+    train_stats = {s.strategy_name: s for s in train_analyzer.compute()}
+    test_stats  = {s.strategy_name: s for s in test_analyzer.compute()}
+
+    # Two-stage gate
+    print("\n=== RESULTS ===")
+    print(f"{'Strategy':30s} {'TRAIN':30s} {'TEST':25s} {'VERDICT':10s}")
+    print("-" * 100)
+
+    TRAIN_GATE = lambda s: s.total_trades >= 30 and s.expectancy > 0
+    TEST_GATE  = lambda s: s.total_trades >= 20 and s.expectancy > 0
+
+    for name in sorted(train_stats.keys()):
+        tr = train_stats[name]
+        te = test_stats.get(name)
+        train_pass = TRAIN_GATE(tr)
+        test_pass  = TEST_GATE(te) if te else False
+
+        if train_pass and test_pass:
+            verdict = "VALIDATED"
+        elif train_pass and not test_pass:
+            verdict = "PENDING"   # passes train, fails test
+        else:
+            verdict = "FAILED"
+
+        tr_str = f"{tr.total_trades}t WR={tr.win_rate:.1%} E={tr.expectancy:.3f}R"
+        te_str = f"{te.total_trades}t WR={te.win_rate:.1%} E={te.expectancy:.3f}R" if te else "no data"
+        print(f"{name:30s} {tr_str:30s} {te_str:25s} [{verdict}]")
+
+    # Export CSVs
+    train_analyzer.to_csv("backtest_results/train_results.csv")
+    test_analyzer.to_csv("backtest_results/test_results.csv")
 ```
 
-Key rules for the worker function:
-- Must be a top-level function (not nested, not a method) — required for pickle
-- Must instantiate a fresh strategy and engine — never share instances
-- Must catch all exceptions and return them — never crash the pool
-- No print statements inside _run_one — they interleave across processes
+Key rules for worker function:
+- Top-level function — required for pickle (not method, not lambda)
+- Fresh strategy + engine per call — never share instances across workers
+- Catches all exceptions — never crash the pool
+- No print inside _run_one — output interleaves across processes
 
 EXPECTED SPEEDUP:
-  Sequential: ~20 tickers × 7 strategies × ~3s each ≈ 7 minutes
-  Parallel (8 cores): ≈ 1-2 minutes
+  Jobs: 40 tickers × 7 strategies × 2 phases = 560 jobs
+  Sequential: ~560 × 2s ≈ 18 minutes
+  Parallel (8 cores): ≈ 3-4 minutes
+
+---
+
+### After running: classify and tune
+
+Read the output and classify each non-validated strategy:
+
+LEVEL 1 — too few trades (wrong universe):
+  Fix: expand universe further. Do NOT change strategy logic.
+  Re-run backtest with added tickers. Max 2 expansion attempts.
+
+LEVEL 2 — reasonable trades, near-zero or negative expectancy:
+  Means right signal, wrong threshold. ONE parameter change at a time.
+  Tuning plan per strategy:
+
+  S2 RSIMeanReversion (if still failing after expansion):
+    Iter 1: tighten stop from 1.5×ATR to 1.0×ATR
+    Iter 2: add volume_ratio > 1.2x on entry bar
+    Iter 3: stricter RSI — require RSI < 35 two bars ago before cross
+    After 3 iters with no pass: retire
+
+  S3 BBSqueeze (if expectancy near zero):
+    Iter 1: replace bb_upper exit with ATR trailing stop
+    Iter 2: tighten volume entry from 1.5× to 2.0×
+    After 2 iters with no pass: accept as-is (already passed original gate)
+
+  S10 GoldenCrossPullback (if train passes, test fails):
+    Iter 1: tighten "within 10 bars" to "within 5 bars"
+    Iter 2: add weekly trend confirmation (weekly SMA10 > SMA40)
+    After 2 iters with no pass: pending — monitor in paper trading
+
+LEVEL 3 — large negative expectancy, high trade count:
+  Retire immediately. Do not tune.
+
+HARD RULES FOR ALL TUNING:
+  - Never tune on the test set
+  - One parameter change per iteration
+  - Maximum 3 iterations per strategy
+  - Each iteration requires full train re-run, not spot check
+  - A strategy passes only when BOTH train AND test pass their gates
+  - Train passes, test fails = curve fitted = retire or pending
+
+---
 
 CREATE: backtesting/validated_strategies.json
-  After running, manually create this file listing strategies that PASSED:
-  ```json
-  {
-    "validated": ["S1_TrendPullback", "S7_MACDCross"],
-    "pending": ["S2_RSIMeanReversion", "S3_BBSqueeze"],
-    "failed": [],
-    "last_run": "YYYY-MM-DD",
-    "universe": ["SPY","QQQ",...],
-    "window": "2019-01-01 to 2024-01-01"
-  }
-  ```
-  Fill in actual results. This file is read by the scanner in Phase 3.
 
-CREATE: backtesting/validated_strategies.json
-  After running, manually create this file listing strategies that PASSED:
-  ```json
-  {
-    "validated": ["S1_TrendPullback", "S7_MACDCross"],
-    "pending": ["S2_RSIMeanReversion", "S3_BBSqueeze"],
-    "failed": [],
-    "last_run": "YYYY-MM-DD",
-    "universe": ["SPY","QQQ",...],
-    "window": "2019-01-01 to 2024-01-01"
-  }
-  ```
-  Fill in actual results. This file is read by the scanner in Phase 3.
+Fill in after running. Structure now includes train/test results:
+```json
+{
+  "validated": [],
+  "pending": [],
+  "retired": [],
+  "last_run": "YYYY-MM-DD",
+  "universe": ["SPY","QQQ","IWM",...],
+  "train_window": "per-ticker max(2005-01-01, ipo) to 2021-01-01",
+  "test_window": "2021-01-01 to 2026-01-01",
+  "results": {
+    "S1_TrendPullback": {
+      "train": {"trades": 0, "win_rate": 0.0, "expectancy": 0.0, "gate": "PASS"},
+      "test":  {"trades": 0, "win_rate": 0.0, "expectancy": 0.0, "gate": "PASS"},
+      "verdict": "VALIDATED"
+    }
+  },
+  "tuning_log": []
+}
+```
+
+The "tuning_log" array records every parameter change attempted:
+```json
+{
+  "tuning_log": [
+    {
+      "strategy": "S2_RSIMeanReversion",
+      "iteration": 1,
+      "change": "stop from 1.5xATR to 1.0xATR",
+      "train_result": {"trades": 0, "expectancy": 0.0, "gate": "PASS"},
+      "test_result":  {"trades": 0, "expectancy": 0.0, "gate": "FAIL"},
+      "outcome": "retired — curve fitted"
+    }
+  ]
+}
+```
+
+This file is the complete audit trail. Never delete entries.
 
 VERIFY:
 ```bash
 python backtesting/run_backtest.py
 ```
-Must complete without errors. Should finish in 1-2 minutes (not 7+).
-Results printed for every strategy with PASS/FAIL gate status.
+Must complete in 3-4 minutes. Prints two-stage gate results for all strategies.
 
 CHANGELOG:
 ```
-## YYYY-MM-DD — Task 2.9: Full backtest run — parallelized
+## YYYY-MM-DD — Task 2.9: Expanded backtest — 40 tickers, train/test split
 ### Modified
-- backtesting/run_backtest.py: parallel ProcessPoolExecutor,
-  updated universe + all strategies
+- backtesting/run_backtest.py: 40-ticker universe, 80/20 train/test split,
+  two-stage gate, tuning classification, ProcessPoolExecutor
 ### Added
-- backtesting/validated_strategies.json
+- backtesting/validated_strategies.json: full results + tuning_log
+### Universe
+- 40 tickers across 7 categories (see ARCHITECTURE_DECISIONS.md ADR-014)
+- Per-ticker start: max(2005-01-01, ticker_ipo)
+### Train window: per-ticker start to 2021-01-01
+### Test window:  2021-01-01 to 2026-01-01
 ### Performance
-- Jobs: XX (strategies × tickers)
+- Jobs: 560 (40 tickers × 7 strategies × 2 phases)
 - Workers: XX cores
-- Runtime: XX minutes (vs ~7 min sequential)
-### Results — fill in real numbers
-- S1:  XX trades WR=XX% E=XX R — PASS/FAIL
-- S2:  XX trades WR=XX% E=XX R — PASS/FAIL
-- S3:  XX trades WR=XX% E=XX R — PASS/FAIL
-- S7:  XX trades WR=XX% E=XX R — PASS/FAIL
-- S8:  XX trades WR=XX% E=XX R — PASS/FAIL
-- S9:  XX trades WR=XX% E=XX R — PASS/FAIL
-- S10: XX trades WR=XX% E=XX R — PASS/FAIL
+- Runtime: XX minutes
+### Results — fill in after running
+Train / Test / Verdict:
+- S1:  XXXt WR=XX% E=XX / XXt WR=XX% E=XX — VALIDATED/PENDING/FAILED
+- S2:  XXXt WR=XX% E=XX / XXt WR=XX% E=XX — VALIDATED/PENDING/FAILED
+- S3:  XXXt WR=XX% E=XX / XXt WR=XX% E=XX — VALIDATED/PENDING/FAILED
+- S7:  XXXt WR=XX% E=XX / XXt WR=XX% E=XX — VALIDATED/PENDING/FAILED
+- S8:  XXXt WR=XX% E=XX / XXt WR=XX% E=XX — VALIDATED/PENDING/FAILED
+- S9:  XXXt WR=XX% E=XX / XXt WR=XX% E=XX — VALIDATED/PENDING/FAILED
+- S10: XXXt WR=XX% E=XX / XXt WR=XX% E=XX — VALIDATED/PENDING/FAILED
+### Tuning applied
+- [fill in any tuning iterations with parameter changes and outcomes]
+```
+
+---
+
+## Task 2.10 — S8 enhanced variant: add SMA200 trend filter
+
+## Context — read before starting
+
+S8 StochasticCross validated with: train WR=57.1% E=+0.166R (3602t),
+test WR=54.2% E=+0.133R (1000t). Real edge, but 200 signals/year on the
+39-ticker universe (~5/wk on a personal watchlist) is high volume for
+thin-per-trade edge (avg_win ~1.07R, avg_loss ~1.0R).
+
+The hypothesis: stochastic crosses above 20 in stocks trading ABOVE their
+SMA200 (oversold in an uptrend) are higher quality than crosses in stocks
+below SMA200 (dead cat bounces in downtrends). Adding price > SMA200 as a
+required condition should reduce volume and improve per-trade expectancy.
+
+This task tests that hypothesis as a parallel candidate, not a replacement.
+S8 stays in the registry and scanner unless S8v2 strictly dominates.
+
+READS FIRST:
+- backtesting/strategies/s8_stochastic_cross.py (full file)
+- backtesting/base.py (_stop_is_valid, _verdict, BaseStrategy)
+- backtesting/data.py (SQLiteProvider — use this, not YFinanceProvider)
+- backtesting/validated_strategies.json (current S8 baseline numbers)
+
+---
+
+### Step 1 — Create S8v2 strategy file
+
+CREATE: backtesting/strategies/s8v2_stochastic_sma_filter.py
+
+Copy s8_stochastic_cross.py exactly. Then make ONE change only:
+
+Add as the first condition in _check_conditions():
+```python
+Condition(
+    label="Uptrend filter (price above SMA200)",
+    passed=trend.get("price_vs_sma200") == "above",
+    value="above" if trend.get("price_vs_sma200") == "above" else "below",
+    required="above"
+)
+```
+
+Everything else — entry logic, stop logic, exit logic, all other conditions,
+_compute_risk(), _stop_is_valid() call — identical to S8.
+
+Class name: StochasticSmaTrendStrategy
+name = "S8v2_StochasticSmaTrend"
+type = "reversion"
+
+DO NOT modify s8_stochastic_cross.py.
+DO NOT register S8v2 in registry.py yet — that happens only after it passes.
+
+---
+
+### Step 2 — Run comparison backtest from local DB
+
+READS FIRST:
+- backtesting/run_backtest.py (current structure)
+- backtesting/data.py (SQLiteProvider)
+
+The local SQLite DB already has all 39 tickers cached. Use it.
+
+CREATE: backtesting/run_s8_comparison.py
+
+This is a standalone script — it does NOT use run_backtest.py.
+It runs only S8 and S8v2, reads from SQLiteProvider, prints comparison.
+
+```python
+"""
+S8 vs S8v2 comparison backtest.
+Reads from local SQLite DB — no yfinance calls.
+Usage: python backtesting/run_s8_comparison.py
+"""
+from concurrent.futures import ProcessPoolExecutor, as_completed
+import multiprocessing, json
+from backtesting.data import SQLiteProvider
+from backtesting.engine import BacktestEngine
+from backtesting.results import ResultsAnalyzer
+from backtesting.strategies.s8_stochastic_cross import StochasticCrossStrategy
+from backtesting.strategies.s8v2_stochastic_sma_filter import StochasticSmaTrendStrategy
+
+UNIVERSE = [...]   # same 39 tickers as run_backtest.py — copy exactly
+TICKER_STARTS = {...}  # same per-ticker start dates — copy exactly
+TRAIN_END  = "2021-01-01"
+TEST_START = "2021-01-01"
+TEST_END   = "2026-01-01"
+
+STRATEGIES = [StochasticCrossStrategy, StochasticSmaTrendStrategy]
+
+def _run_one(args):
+    strategy_class, ticker, start, end, phase = args
+    strategy = strategy_class()
+    engine = BacktestEngine(data_provider=SQLiteProvider())
+    try:
+        logs = engine.run(strategy, [ticker], start, end)
+        return {"strategy": strategy.name, "ticker": ticker,
+                "phase": phase, "log": logs[0] if logs else None, "error": None}
+    except Exception as e:
+        return {"strategy": strategy.name, "ticker": ticker,
+                "phase": phase, "log": None, "error": str(e)}
+
+if __name__ == "__main__":
+    jobs = []
+    for cls in STRATEGIES:
+        for ticker in UNIVERSE:
+            start = TICKER_STARTS.get(ticker, "2005-01-01")
+            jobs.append((cls, ticker, start, TRAIN_END, "train"))
+            jobs.append((cls, ticker, TEST_START, TEST_END, "test"))
+
+    MAX_WORKERS = min(multiprocessing.cpu_count(), 8)
+    train_logs, test_logs = [], []
+
+    print(f"Running {len(jobs)} jobs ({MAX_WORKERS} workers, reading from SQLite)...")
+    with ProcessPoolExecutor(max_workers=MAX_WORKERS) as ex:
+        futures = {ex.submit(_run_one, j): j for j in jobs}
+        for f in as_completed(futures):
+            r = f.result()
+            if r["error"]:
+                print(f"  SKIP {r['strategy']} {r['ticker']}: {r['error']}")
+            elif r["log"]:
+                (train_logs if r["phase"] == "train" else test_logs).append(r["log"])
+
+    # Print side-by-side comparison
+    train_stats = {s.strategy_name: s for s in ResultsAnalyzer(train_logs).compute()}
+    test_stats  = {s.strategy_name: s for s in ResultsAnalyzer(test_logs).compute()}
+
+    print()
+    print(f"{'Strategy':35s}  {'TRAIN':35s}  {'TEST':35s}  VERDICT")
+    print("-" * 120)
+
+    TRAIN_GATE = lambda s: s.total_trades >= 30 and s.expectancy > 0
+    TEST_GATE  = lambda s: s.total_trades >= 20 and s.expectancy > 0
+
+    for name in sorted(train_stats):
+        tr = train_stats[name]
+        te = test_stats.get(name)
+        tp = TRAIN_GATE(tr)
+        xp = TEST_GATE(te) if te else False
+        verdict = "PASS" if tp and xp else ("TRAIN_ONLY" if tp else "FAIL")
+        tr_s = f"{tr.total_trades:4d}t WR={tr.win_rate:.1%} E={tr.expectancy:+.4f}R"
+        te_s = f"{te.total_trades:4d}t WR={te.win_rate:.1%} E={te.expectancy:+.4f}R" if te else "—"
+        print(f"{name:35s}  {tr_s:35s}  {te_s:35s}  [{verdict}]")
+```
+
+VERIFY: Script completes in under 2 minutes (SQLite reads, no network).
+Results print for both strategies side-by-side.
+
+---
+
+### Step 3 — Decision rules
+
+Read the output and apply exactly one of these outcomes:
+
+**S8v2 PASSES both gates AND improves on S8:**
+  Criteria: test E(v2) > E(S8) AND test WR(v2) >= WR(S8) - 3pp
+  Action:
+  1. Register S8v2 in registry.py INSTEAD OF S8
+     (replace S8 import and instance — one line change)
+  2. Update validated_strategies.json:
+     - Move S8 to "superseded" key (new key, not retired, not validated)
+     - Add S8v2 to "validated"
+     - Add tuning_log entry documenting the comparison
+  3. Remove S8 from registry — it is superseded, not retired
+
+**S8v2 PASSES both gates but does NOT improve on S8:**
+  Criteria: both pass gates but v2 E is similar or lower
+  Action:
+  1. Keep S8 in registry as-is
+  2. Note S8v2 result in tuning_log — filter did not improve quality
+  3. Do not register S8v2
+  4. If results are IDENTICAL (same trades, same WR, same E to 3dp):
+     This means S8's should_enter() already implements the filter.
+     Document which condition in should_enter() is responsible.
+     Add that condition explicitly to _check_conditions() so the
+     scanner interface matches the backtest interface — see Step 5.
+
+**S8v2 FAILS either gate:**
+  Action:
+  1. Keep S8 in registry as-is
+  2. Note S8v2 result in tuning_log — filter reduced signal count too much
+  3. Do not register S8v2
+
+DO NOT run a second tuning iteration on S8v2 regardless of outcome.
+This is one attempt. S8 is validated. If v2 doesn't improve it, move on.
+
+---
+
+### Step 5 — Backtest/scanner consistency check (run if results are identical)
+
+If S8 and S8v2 produced identical results, it means S8's `should_enter()`
+already implements the SMA200 filter. This creates a silent inconsistency:
+
+  - `should_enter()` enforces SMA200 → backtest only validated SMA200-filtered trades
+  - `_check_conditions()` may not include SMA200 → scanner can fire on non-SMA200 stocks
+  - Result: scanner fires signals that the backtest never tested
+
+This is the most dangerous class of bug — the system appears to work but
+the live scanner is operating outside the validated envelope.
+
+FIX: Read s8_stochastic_cross.py. Find every condition in `should_enter()`
+that is not already represented in `_check_conditions()`. Add each missing
+condition as a Condition object. Do not change the logic — make it visible.
+
+After the fix, `_check_conditions()` must be a complete superset of every
+filter applied in `should_enter()`. The rule: if `should_enter()` checks it,
+`_check_conditions()` must show it.
+
+Check all other strategies for the same issue while here — any condition in
+`should_enter()` that is absent from `_check_conditions()` is a hidden filter.
+
+VERIFY:
+```python
+# Manual review — read should_enter() and _check_conditions() for each strategy
+# Confirm every should_enter() condition has a matching Condition in _check_conditions()
+# Document any gaps found in CHANGELOG.md
+```
+
+CHANGELOG addition:
+```
+### Consistency fix
+- s8_stochastic_cross.py: SMA200 condition added to _check_conditions() —
+  was already enforced in should_enter() but invisible to scanner
+- [list any other strategies fixed]
+- Root cause: should_enter() and _check_conditions() written independently,
+  no enforcement that they stay in sync. Fixed by convention: _check_conditions()
+  must be a superset of should_enter() filters.
+```
+
+---
+
+### Step 4 — Update validated_strategies.json
+
+Add tuning_log entry regardless of outcome:
+```json
+{
+  "strategy": "S8_StochasticCross",
+  "iteration": 1,
+  "variant": "S8v2_StochasticSmaTrend",
+  "change": "Added price > SMA200 as first required condition",
+  "rationale": "Filter counter-trend crosses. Reversion-in-uptrend hypothesis.",
+  "baseline": {
+    "train": {"trades": 3602, "win_rate": 0.571, "expectancy": 0.166},
+    "test":  {"trades": 1000, "win_rate": 0.542, "expectancy": 0.133}
+  },
+  "variant_result": {
+    "train": {"trades": 0, "win_rate": 0.0, "expectancy": 0.0, "gate": ""},
+    "test":  {"trades": 0, "win_rate": 0.0, "expectancy": 0.0, "gate": ""}
+  },
+  "outcome": "fill in: S8v2_supersedes_S8 | S8v2_no_improvement | S8v2_failed_gate"
+}
+```
+
+VERIFY:
+```python
+import json
+data = json.load(open("backtesting/validated_strategies.json"))
+assert len(data["tuning_log"]) >= 1
+assert data["tuning_log"][0]["strategy"] == "S8_StochasticCross"
+assert data["tuning_log"][0]["outcome"] != "fill in"
+# Exactly one of S8 or S8v2 must be in validated
+s8_present   = "S8_StochasticCross"     in data["validated"]
+s8v2_present = "S8v2_StochasticSmaTrend" in data["validated"]
+assert s8_present != s8v2_present, "exactly one S8 variant must be validated"
+print("2.10 ok")
+```
+
+CHANGELOG:
+```
+## YYYY-MM-DD — Task 2.10: S8v2 SMA200 filter comparison
+### Added
+- backtesting/strategies/s8v2_stochastic_sma_filter.py
+- backtesting/run_s8_comparison.py
+### Modified
+- backtesting/validated_strategies.json: tuning_log entry added
+### Result
+- S8v2 train: XXXt WR=XX% E=XX — PASS/FAIL
+- S8v2 test:  XXXt WR=XX% E=XX — PASS/FAIL
+- Outcome: [S8v2_supersedes_S8 | S8v2_no_improvement | S8v2_failed_gate]
+### Registry change
+- [S8v2 registered in place of S8] OR [S8 kept unchanged]
 ```
 
 ---
@@ -842,12 +1271,20 @@ CHANGELOG:
 ## Phase 2 complete checklist
 
 - [ ] base.py has Condition, RiskLevels, StrategyResult, upgraded BaseStrategy
-- [ ] registry.py exists with all 7 strategies registered
+- [ ] base.py has _stop_is_valid() guard and StrategyResult.ticker field
+- [ ] registry.py exists with all strategies registered
 - [ ] StrategyScanner.scan() runs without errors on any ticker
-- [ ] All 7 strategies have evaluate() + _check_conditions() + _compute_risk()
-- [ ] run_backtest.py produces results for all strategies
-- [ ] validated_strategies.json created with real results filled in
-- [ ] CHANGELOG.md has all task entries with real numbers in Task 2.9
+- [ ] All strategies have evaluate() + _check_conditions() + _compute_risk()
+- [ ] All _compute_risk() implementations call _stop_is_valid() and return None if False
+- [ ] All strategies: every should_enter() condition has a matching Condition in _check_conditions()
+- [ ] S8 _check_conditions() explicitly includes SMA200 uptrend condition
+- [ ] run_backtest.py uses SQLiteProvider (reads from local DB, not yfinance)
+- [ ] run_backtest.py completes in under 5 minutes
+- [ ] validated_strategies.json has real train + test results filled in
+- [ ] validated_strategies.json tuning_log has S8 comparison entry
+- [ ] Exactly one S8 variant in validated (either S8 or S8v2, not both)
+- [ ] S10 in pending with classification note
+- [ ] CHANGELOG.md has all task entries with real numbers
 - [ ] `python scripts/smoke_test.py` passes
 - [ ] `git diff app/` shows zero changes to existing app/ files
 - [ ] `python -m pytest tests/` — all original tests passing
