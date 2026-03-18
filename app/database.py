@@ -152,6 +152,32 @@ def init_db() -> None:
         )
     """)
 
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS open_trades (
+            id              SERIAL PRIMARY KEY,
+            user_id         INTEGER NOT NULL REFERENCES users(id),
+            ticker          VARCHAR(10) NOT NULL,
+            strategy_name   VARCHAR(50) NOT NULL,
+            strategy_type   VARCHAR(20) NOT NULL,
+            entry_price     NUMERIC(12,4) NOT NULL,
+            stop_loss       NUMERIC(12,4) NOT NULL,
+            target          NUMERIC(12,4) NOT NULL,
+            shares          INTEGER NOT NULL,
+            entry_date      DATE NOT NULL DEFAULT CURRENT_DATE,
+            risk_reward     NUMERIC(6,3),
+            status          VARCHAR(20) NOT NULL DEFAULT 'open',
+            exit_price      NUMERIC(12,4),
+            exit_date       DATE,
+            exit_reason     VARCHAR(50),
+            created_at      TIMESTAMP DEFAULT NOW()
+        )
+    """)
+
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_open_trades_user
+            ON open_trades(user_id) WHERE status = 'open'
+    """)
+
     conn.commit()
     conn.close()
 

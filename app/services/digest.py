@@ -122,6 +122,58 @@ def generate_strategy_briefing(user_id: int) -> str:
     return "\n".join(lines)
 
 
+def generate_trade_alerts(user_id: int) -> str:
+    """
+    Check all open trades for exit conditions.
+    Returns formatted alert string. Empty string if no alerts.
+    """
+    from datetime import date
+
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT * FROM open_trades WHERE user_id = %s AND status = 'open'",
+        (user_id,),
+    ).fetchall()
+    conn.close()
+
+    if not rows:
+        return ""
+
+    alerts = []
+    for row in rows:
+        ticker = row["ticker"]
+        strategy = row["strategy_name"]
+        entry = float(row["entry_price"])
+        stop = float(row["stop_loss"])
+        target = float(row["target"])
+
+        try:
+            _, price_list, _ = get_or_refresh_data(ticker)
+            cp = price_list[-1]["close"] if price_list else None
+        except Exception:
+            cp = None
+
+        if cp is None:
+            continue
+
+        if cp <= stop * 1.02:
+            alerts.append(
+                f"\u26a0 {ticker} {strategy}: approaching stop"
+                f" \u2014 current ${cp:.2f}  stop ${stop:.2f}"
+            )
+        elif cp >= target * 0.98:
+            alerts.append(
+                f"\u2713 {ticker} {strategy}: at target"
+                f" \u2014 current ${cp:.2f}  target ${target:.2f}"
+            )
+
+    if not alerts:
+        return ""
+
+    lines = [f"OPEN TRADE ALERTS \u2014 {date.today()}", ""] + alerts
+    return "\n".join(lines)
+
+
 def run_nightly_refresh() -> dict:
     """
     1. Collect all unique watchlisted tickers
