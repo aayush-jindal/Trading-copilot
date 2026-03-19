@@ -19,7 +19,7 @@ import SignalPanel from '../components/SignalPanel'
 import SwingSetupPanel from '../components/SwingSetupPanel'
 import StrategyPanel from '../components/StrategyPanel'
 import NarrativePanel from '../components/NarrativePanel'
-import BookStrategiesPanel from '../components/BookStrategiesPanel'
+import BookStrategiesPanel, { type BookStrategiesData } from '../components/BookStrategiesPanel'
 import TickerCard from '../components/TickerCard'
 import LoadingSkeleton from '../components/LoadingSkeleton'
 import { useAuth } from '../context/AuthContext'
@@ -59,7 +59,8 @@ export default function AnalysisPage() {
   const [isStreaming, setIsStreaming]            = useState(false)
   const [error, setError]                       = useState<string | null>(null)
   const [strategies, setStrategies]             = useState<StrategyResult[]>([])
-  const [bookStrategies, setBookStrategies]     = useState<string | null>(null)
+  const [activeStrategyIdx, setActiveStrategyIdx] = useState(0)
+  const [bookStrategies, setBookStrategies]     = useState<BookStrategiesData | null>(null)
   const [isLoadingBook, setIsLoadingBook]       = useState(false)
   const [bookError, setBookError]               = useState<string | null>(null)
   const [history, setHistory]             = useState<string[]>(loadHistory)
@@ -120,13 +121,14 @@ export default function AnalysisPage() {
     setPrices([])
     setAnalysis(null)
     setStrategies([])
+    setActiveStrategyIdx(0)
     setNarrative('')
     setError(null)
     setIsLoading(true)
     setIsStreaming(false)
     setBookStrategies(null)
     setBookError(null)
-    setIsLoadingBook(true)
+    setIsLoadingBook(false)
 
     try {
       const [priceRes, analysisRes, strategiesData] = await Promise.all([
@@ -145,17 +147,10 @@ export default function AnalysisPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load data')
       setIsLoading(false)
-      setIsLoadingBook(false)
       return
     }
 
     setIsLoading(false)
-
-    // Fire book strategies fetch in background — does not block the main UI
-    fetchKnowledgeStrategies(ticker)
-      .then((res) => setBookStrategies(res.strategies))
-      .catch((err) => setBookError(err instanceof Error ? err.message : 'Failed to load book strategies'))
-      .finally(() => setIsLoadingBook(false))
     setIsStreaming(true)
 
     closeStreamRef.current = streamNarrative(
@@ -193,6 +188,16 @@ export default function AnalysisPage() {
     } finally {
       setWatchlistLoading(false)
     }
+  }
+
+  async function handleGenerateBook() {
+    if (!currentTicker) return
+    setIsLoadingBook(true)
+    setBookError(null)
+    fetchKnowledgeStrategies(currentTicker)
+      .then((res) => setBookStrategies(res.strategies))
+      .catch((err) => setBookError(err instanceof Error ? err.message : 'Failed to load book strategies'))
+      .finally(() => setIsLoadingBook(false))
   }
 
   const isWatched = currentTicker ? watchlistSet.has(currentTicker) : false
@@ -348,20 +353,57 @@ export default function AnalysisPage() {
               </div>
             )}
 
-            {/* Strategy panels — sorted ENTRY first, then by score descending */}
-            {strategies.length > 0 && (
-              <div className="flex flex-col gap-3 [animation-delay:140ms]">
-                {[...strategies]
-                  .sort((a, b) => {
-                    if (a.verdict === 'ENTRY' && b.verdict !== 'ENTRY') return -1
-                    if (b.verdict === 'ENTRY' && a.verdict !== 'ENTRY') return 1
-                    return b.score - a.score
-                  })
-                  .map((result, i) => (
-                    <StrategyPanel key={`${result.name}-${i}`} result={result} />
-                  ))}
-              </div>
-            )}
+            {/* Strategy tabs — sorted ENTRY first, then by score descending */}
+            {strategies.length > 0 && (() => {
+              const sorted = [...strategies].sort((a, b) => {
+                if (a.verdict === 'ENTRY' && b.verdict !== 'ENTRY') return -1
+                if (b.verdict === 'ENTRY' && a.verdict !== 'ENTRY') return 1
+                return b.score - a.score
+              })
+              const safeIdx = Math.min(activeStrategyIdx, sorted.length - 1)
+              const active  = sorted[safeIdx]
+
+              return (
+                <div className="flex flex-col gap-0 [animation-delay:140ms]">
+                  {/* Tab row */}
+                  <div className="flex gap-1 overflow-x-auto pb-0 scrollbar-none border-b border-white/8">
+                    {sorted.map((s, i) => {
+                      const isActive = i === safeIdx
+                      const tabColor =
+                        s.verdict === 'ENTRY'
+                          ? isActive
+                            ? 'border-green-400 text-green-300 bg-green-500/10'
+                            : 'border-transparent text-green-500/60 hover:text-green-300 hover:border-green-500/40'
+                          : s.verdict === 'WATCH'
+                          ? isActive
+                            ? 'border-yellow-400 text-yellow-300 bg-yellow-500/10'
+                            : 'border-transparent text-yellow-500/50 hover:text-yellow-300 hover:border-yellow-500/40'
+                          : isActive
+                          ? 'border-white/30 text-gray-300 bg-white/5'
+                          : 'border-transparent text-gray-600 hover:text-gray-400 hover:border-white/20'
+
+                      return (
+                        <button
+                          key={s.name}
+                          onClick={() => setActiveStrategyIdx(i)}
+                          className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 -mb-px transition-all whitespace-nowrap flex-shrink-0 rounded-t-md ${tabColor}`}
+                        >
+                          <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+                            s.verdict === 'ENTRY' ? 'bg-green-400' :
+                            s.verdict === 'WATCH' ? 'bg-yellow-400' : 'bg-gray-500'
+                          }`} />
+                          {s.name.replace(/^S\d+_/, '')}
+                          <span className="text-[10px] opacity-50 tabular-nums">{s.score}</span>
+                        </button>
+                      )
+                    })}
+                  </div>
+
+                  {/* Active panel */}
+                  <StrategyPanel result={active} />
+                </div>
+              )
+            })()}
 
             {/* Narrative */}
             <div className="[animation-delay:150ms]">
@@ -372,6 +414,14 @@ export default function AnalysisPage() {
 
             {/* Book Strategies */}
             <div className="[animation-delay:175ms]">
+              {!bookStrategies && !isLoadingBook && !bookError && (
+                <button
+                  onClick={handleGenerateBook}
+                  className="w-full py-3 rounded-xl border border-amber-500/20 bg-amber-500/5 text-amber-400/80 text-sm font-medium hover:bg-amber-500/10 hover:text-amber-300 hover:border-amber-500/40 transition-all"
+                >
+                  📚 Generate book analysis
+                </button>
+              )}
               {(isLoadingBook || bookStrategies || bookError) && (
                 <BookStrategiesPanel
                   strategies={bookStrategies}

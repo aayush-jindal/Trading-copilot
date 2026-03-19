@@ -2,6 +2,74 @@
 
 ---
 
+## 2026-03-19 — Feature: crosshair tooltip showing indicator values on hover (PriceChart.tsx)
+
+### File modified
+- `frontend/src/components/PriceChart.tsx` — Added `TooltipState` interface and `ChartTooltip` component. `useChartInstance` now subscribes to `chart.subscribeCrosshairMove` in the chart-creation effect. On each crosshair move it reads OHLC from the candlestick series and per-value from every line/histogram series via `param.seriesData`. Toggled-off indicators have empty series so return `undefined`, which the tooltip row filter naturally hides. The tooltip renders as a semi-transparent dark overlay pinned to the top-left of the chart container. Works in both the inline chart and the fullscreen modal.
+
+---
+
+## 2026-03-19 — UX: strategy panels converted to tabs under Swing Setup
+
+### File modified
+- `frontend/src/pages/AnalysisPage.tsx` — Replaced stacked `StrategyPanel` list with a horizontal tab bar. Each tab shows the strategy short name (S1_ prefix stripped) and score. Tabs are color-coded: green for ENTRY verdicts, yellow for WATCH, gray for NO_TRADE. Active tab is highlighted with a bottom border and tinted background. Clicking a tab swaps the panel below. Sort order unchanged: ENTRY first, then by score descending. `activeStrategyIdx` resets to 0 on each new ticker search.
+
+---
+
+## 2026-03-19 — Config: reduce STALENESS_HOURS from 24 to 4
+
+### File modified
+- `app/config.py` — `STALENESS_HOURS` changed from 24 to 4. Data is now refreshed from yfinance if the last fetch was more than 4 hours ago, ensuring today's closing bar is picked up when searching after market close.
+
+---
+
+## 2026-03-19 — Fix: chart not updating after null-bar filter (PriceChart.tsx)
+
+### File modified
+- `frontend/src/components/PriceChart.tsx` — The previous fix filtered null OHLC bars only for the candlestick series. The volume `setData` still received raw prices with null values and could crash, aborting the effect before `setVisibleRange` ran — causing the chart to never update its viewport on ticker change. Fix: compute `cleanPrices` once at the top of the effect (bars where all OHLC fields are non-null), use it for candlestick, volume, and the `closes` array fed to all indicator math helpers. RSI and MACD data-update effects also updated to use `cleanPrices` so null closes don't produce NaN in indicator output.
+
+---
+
+## 2026-03-19 — Fix: candlestick chart crash on null OHLC values (PriceChart.tsx:207)
+
+### File modified
+- `frontend/src/components/PriceChart.tsx` — Added `.filter()` before `.map()` in `candleRef.current.setData(...)` to drop any bars where `open`, `high`, `low`, or `close` is null. lightweight-charts asserts all OHLC fields are numbers and throws if any is null, crashing the entire component tree.
+
+---
+
+## 2026-03-19 — Fix: null guards on .toFixed() in SignalPanel.tsx
+
+### File modified
+- `frontend/src/components/SignalPanel.tsx` — Line 145: `lvl.price.toFixed(2)` → `lvl.price != null ? lvl.price.toFixed(2) : '—'`. Line 247: `analysis.price.toFixed(2)` → `analysis.price != null ? analysis.price.toFixed(2) : '—'`.
+
+---
+
+## 2026-03-19 — Fix: null guard on .toFixed() calls in TickerCard.tsx
+
+### File modified
+- `frontend/src/components/TickerCard.tsx` — Added `!= null` guards on all three `.toFixed()` calls: `price`, `Math.abs(dayChange)`, `Math.abs(dayChangePct)`. Each falls back to `'—'` when null. Prevents runtime TypeError when price data arrives as null.
+
+---
+
+## 2026-03-18 — Fix: S8 _compute_risk() two-step stop calculation
+
+### File modified
+- `backtesting/strategies/s8_stochastic_cross.py` — `_compute_risk()` now tries `nearest_support` first, falls back to `entry_price - 1.5 * atr` if `_stop_is_valid()` rejects it, and returns `None` only if the fallback also fails. Previously it returned `None` immediately when `nearest_support` failed validation, leaving valid setups without risk levels.
+
+---
+
+## 2026-03-18 — Feature: DB cache for book strategy results + on-demand generation button (fix1.md 1.2)
+
+### Files modified
+- `app/database.py` — Added `knowledge_strategy_cache` table (`ticker TEXT, cache_date DATE, result JSONB, created_at TIMESTAMP`, PK on `(ticker, cache_date)`). Idempotent via `CREATE TABLE IF NOT EXISTS`. Table persists all historical results — no expiry logic.
+- `app/routers/analysis.py` — `knowledge_strategies` route now reads from cache before calling Claude. On cache hit: returns immediately. On miss: calls `generate_strategies()`, writes result to cache with `ON CONFLICT DO NOTHING`, returns result. Cache write failure is silently swallowed so it never breaks the response.
+- `frontend/src/pages/AnalysisPage.tsx` — Removed automatic `fetchKnowledgeStrategies` call from `handleSearch`. Added `handleGenerateBook` function. Book Strategies section now shows a "📚 Generate book analysis" button until clicked; clicking triggers the fetch, shows loading state in the panel, then renders results. Cached results for the same day return near-instantly.
+
+### Reason
+Book strategy generation via Claude takes several seconds and costs API credits on every ticker search. Caching per-day per-ticker eliminates repeated calls for the same ticker on the same day. Making it on-demand (button) avoids the cost and latency for every search — the user explicitly requests it when they want it.
+
+---
+
 ## 2026-03-18 — Fix: fetchKnowledgeStrategies return type corrected in client.ts
 
 ### File modified

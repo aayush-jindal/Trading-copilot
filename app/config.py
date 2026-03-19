@@ -10,7 +10,7 @@ DATABASE_URL = os.getenv(
     "DATABASE_URL",
     "postgresql://postgres:postgres@localhost:5432/trading_copilot",
 )
-STALENESS_HOURS = 24
+STALENESS_HOURS = 4
 HISTORY_PERIOD = "6y"
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")

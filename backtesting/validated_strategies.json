@@ -1,0 +1,200 @@
+{
+  "validated": [
+    "S1_TrendPullback",
+    "S2_RSIMeanReversion",
+    "S3_BBSqueeze",
+    "S7_MACDCross",
+    "S8_StochasticCross",
+    "S9_EMACross"
+  ],
+  "pending": ["S10_GoldenCrossPullback"],
+  "retired": [],
+  "last_run": "2026-03-18",
+  "universe": [
+    "SPY",
+    "QQQ",
+    "IWM",
+    "DIA",
+    "EEM",
+    "EFA",
+    "XLF",
+    "XLK",
+    "XLE",
+    "XLV",
+    "XLY",
+    "XLI",
+    "XLB",
+    "XLP",
+    "AAPL",
+    "MSFT",
+    "GOOGL",
+    "AMZN",
+    "NVDA",
+    "AMD",
+    "TSLA",
+    "META",
+    "NFLX",
+    "JPM",
+    "BAC",
+    "XOM",
+    "V",
+    "MA",
+    "UNH",
+    "HD",
+    "CRM",
+    "SQ",
+    "SHOP",
+    "BRK-B",
+    "GLD",
+    "SLV",
+    "USO",
+    "TLT",
+    "VNQ",
+    "XLRE"
+  ],
+  "train_window": "per-ticker max(2005-01-01, ipo) to 2021-01-01",
+  "test_window": "2021-01-01 to 2026-01-01",
+  "gates": {
+    "train": "total_trades >= 30 AND expectancy > 0",
+    "test": "total_trades >= 20 AND expectancy > 0"
+  },
+  "results": {
+    "S1_TrendPullback": {
+      "train": {
+        "trades": 2912,
+        "tickers": 39,
+        "win_rate": 0.786,
+        "expectancy": 0.11,
+        "gate": "PASS"
+      },
+      "test": {
+        "trades": 699,
+        "tickers": 39,
+        "win_rate": 0.753,
+        "expectancy": 0.06,
+        "gate": "PASS"
+      },
+      "verdict": "VALIDATED"
+    },
+    "S2_RSIMeanReversion": {
+      "train": {
+        "trades": 171,
+        "tickers": 38,
+        "win_rate": 0.503,
+        "expectancy": 0.099,
+        "gate": "PASS"
+      },
+      "test": {
+        "trades": 49,
+        "tickers": 30,
+        "win_rate": 0.592,
+        "expectancy": 0.383,
+        "gate": "PASS"
+      },
+      "verdict": "VALIDATED"
+    },
+    "S3_BBSqueeze": {
+      "train": {
+        "trades": 258,
+        "tickers": 37,
+        "win_rate": 0.457,
+        "expectancy": 0.031,
+        "gate": "PASS"
+      },
+      "test": {
+        "trades": 70,
+        "tickers": 31,
+        "win_rate": 0.5,
+        "expectancy": 0.06,
+        "gate": "PASS"
+      },
+      "verdict": "VALIDATED"
+    },
+    "S7_MACDCross": {
+      "train": {
+        "trades": 1175,
+        "tickers": 38,
+        "win_rate": 0.765,
+        "expectancy": 0.359,
+        "gate": "PASS"
+      },
+      "test": {
+        "trades": 329,
+        "tickers": 38,
+        "win_rate": 0.778,
+        "expectancy": 0.393,
+        "gate": "PASS"
+      },
+      "verdict": "VALIDATED"
+    },
+    "S8_StochasticCross": {
+      "train": {"trades": 3602, "win_rate": 0.571, "expectancy": 0.166, "gate": "PASS"},
+      "test":  {"trades": 1000, "win_rate": 0.542, "expectancy": 0.133, "gate": "PASS"},
+      "verdict": "VALIDATED",
+      "notes": "_stop_is_valid() guard added in base.py; fallback to price-1.5\u00d7ATR when nearest_support is within 0.5\u00d7ATR of entry. Previous +662R expectancy was a bug, not real edge. Realistic results: WR=57.1%, E=+0.166R train."
+    },
+    "S9_EMACross": {
+      "train": {
+        "trades": 849,
+        "tickers": 38,
+        "win_rate": 0.698,
+        "expectancy": 0.169,
+        "gate": "PASS"
+      },
+      "test": {
+        "trades": 247,
+        "tickers": 39,
+        "win_rate": 0.668,
+        "expectancy": 0.025,
+        "gate": "PASS"
+      },
+      "verdict": "VALIDATED"
+    },
+    "S10_GoldenCrossPullback": {
+      "train": {"trades": 158, "win_rate": 0.298, "expectancy": 0.012, "gate": "PASS"},
+      "test":  {"trades":  40, "win_rate": 0.350, "expectancy": -0.010, "gate": "FAIL"},
+      "verdict": "PENDING",
+      "notes": "Train passes but test expectancy is slightly negative (-0.010R). Regime-sensitive \u2014 golden cross pullback underperforms in 2021-2026 period. Monitor; may need parameter tuning."
+    },
+    "S8v2_StochasticSmaTrend": {
+      "train": {
+        "trades": 3602,
+        "win_rate": 0.5713,
+        "expectancy": 0.1656,
+        "gate": "PASS"
+      },
+      "test": {
+        "trades": 1000,
+        "win_rate": 0.542,
+        "expectancy": 0.1327,
+        "gate": "PASS"
+      },
+      "verdict": "NOT_REGISTERED",
+      "notes": "S8v2 passes both gates (train 3602t WR=57.1% E=+0.166R, test 1000t WR=54.2% E=+0.133R) but results are identical to S8 — S8 already gates on SMA200 in should_enter(). No improvement. S8 kept in registry; S8v2 not registered."
+    }
+  },
+  "tuning_log": [
+    {
+      "date": "2026-03-18",
+      "strategy": "S8_StochasticCross",
+      "iteration": 1,
+      "variant": "S8v2_StochasticSmaTrend",
+      "change": "Added price > SMA200 as first required condition",
+      "rationale": "Filter counter-trend crosses. Reversion-in-uptrend hypothesis.",
+      "baseline": {
+        "train": {"trades": 3602, "win_rate": 0.571, "expectancy": 0.166},
+        "test":  {"trades": 1000, "win_rate": 0.542, "expectancy": 0.133}
+      },
+      "variant_result": {
+        "train": {"trades": 3602, "win_rate": 0.5713, "expectancy": 0.1656, "gate": "PASS"},
+        "test":  {"trades": 1000, "win_rate": 0.5420, "expectancy": 0.1327, "gate": "PASS"}
+      },
+      "outcome": "S8v2_no_improvement"
+    }
+  ],
+  "notes": [
+    "SQ (Block Inc) had all 14 download jobs fail \u2014 yfinance reports possibly delisted. Excluded from future runs.",
+    "Initial run_backtest.py summary showed incorrect per-strategy stats due to aggregation bug (dict comprehension kept last ticker only). Fixed in run_backtest.py. True results computed directly from train_results.csv / test_results.csv.",
+    "S8 retired despite passing gates \u2014 expectancy inflated by near-zero risk denominator when nearest_support is within ticks of entry. Structural flaw in stop logic."
+  ]
+}

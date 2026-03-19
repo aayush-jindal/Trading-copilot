@@ -142,7 +142,7 @@ function ExpandableLevels({
           {levels.map((lvl, i) => (
             <div key={i} className="flex items-center justify-between">
               <span className={`text-xs font-mono ${color === 'green' ? 'text-green-400/70' : 'text-red-400/70'}`}>
-                ${lvl.price.toFixed(2)}
+                ${lvl.price != null ? lvl.price.toFixed(2) : '—'}
               </span>
               <Badge label={lvl.strength} variant={strengthVariant(lvl.strength)} />
             </div>
@@ -244,7 +244,7 @@ export default function SignalPanel({ analysis }: SignalPanelProps) {
         }
       >
         <Badge label={trend.signal} variant={trendVariant} showIcon />
-        <span className="text-xs text-gray-500 font-mono">@ ${analysis.price.toFixed(2)}</span>
+        <span className="text-xs text-gray-500 font-mono">@ ${analysis.price != null ? analysis.price.toFixed(2) : '—'}</span>
       </Cell>
     </div>
   )

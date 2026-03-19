@@ -818,6 +818,40 @@ correct (they already reflect the filter). Only the scanner interface needs
 updating to make the filter visible.
 
 ---
+## ADR-016 — Book strategy results are cached per (ticker, day), generation is on-demand
+
+**Date:** March 2026
+**Status:** Active
+
+### Decision
+The `knowledge_strategy_cache` table stores Claude's book strategy output keyed by `(ticker, cache_date)`. The `/analyze/{ticker}/knowledge-strategies` endpoint reads the cache before invoking Claude. On a cache hit, the Claude call is skipped entirely. On a miss, Claude is called, the result is written to cache, and returned.
+
+On the frontend, the book analysis section is not fetched automatically on ticker search. Instead a "📚 Generate book analysis" button is shown. Clicking it triggers the fetch. If a cache hit exists the response is near-instant; otherwise the user waits the few seconds for Claude.
+
+### Why
+
+**Cost and latency**: Each `generate_strategies()` call sends ~8 retrieved passages to Claude and waits for a structured JSON response — typically 3–8 seconds and one API call. Triggering this automatically on every ticker search would be expensive and slow, especially when the user is quickly scanning multiple tickers.
+
+**Same-day stability**: Market conditions don't change meaningfully within a trading day. A book strategy analysis generated at 09:30 is still valid at 15:30 for the same ticker. Per-day caching is the right granularity.
+
+**On-demand UX**: The user may not always want book analysis for every ticker they look up. Making it a button respects that. If they do want it, the cached path makes it instant on repeated access.
+
+### Cache design constraints
+- Primary key on `(ticker, cache_date)` — one row per ticker per day
+- `ON CONFLICT DO NOTHING` on write — concurrent requests on the same ticker/day are safe
+- No expiry logic — historical entries are a permanent record of what the model said on a given day
+- Cache write failure is silently swallowed — a DB error must never break the API response
+
+### Consequence for the frontend
+`handleSearch` in `AnalysisPage.tsx` resets `bookStrategies` and `bookError` to null when a new ticker is searched (so stale results don't carry over). The `isLoadingBook` state is only set to true by `handleGenerateBook`, never by `handleSearch`.
+
+### Rejected alternatives
+- **Auto-fetch on search, no cache** — original implementation. Blocked the UX on slow tickers and re-called Claude identically every time the user revisited a ticker in the same session.
+- **Cache with TTL / daily expiry job** — rejected. Old entries are historical record, not garbage. There is no cost to keeping them. A TTL job adds complexity for no benefit.
+- **Session-only cache (React state)** — rejected. Does not survive page refresh and wastes a Claude call on every session open.
+
+---
+
 ## Open questions — not yet decided
 
 These are decisions that will need to be made as the system evolves.

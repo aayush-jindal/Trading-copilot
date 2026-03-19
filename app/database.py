@@ -187,6 +187,16 @@ def init_db() -> None:
             ON open_trades(user_id) WHERE status = 'open'
     """)
 
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS knowledge_strategy_cache (
+            ticker     TEXT NOT NULL,
+            cache_date DATE NOT NULL,
+            result     JSONB NOT NULL,
+            created_at TIMESTAMP DEFAULT NOW(),
+            PRIMARY KEY (ticker, cache_date)
+        )
+    """)
+
     conn.commit()
     conn.close()
 
