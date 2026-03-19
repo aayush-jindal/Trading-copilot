@@ -143,7 +143,7 @@ export function streamNarrative(
 
 export async function fetchKnowledgeStrategies(
   ticker: string
-): Promise<{ ticker: string; strategies: string }> {
+): Promise<{ ticker: string; strategies: import('../components/BookStrategiesPanel').BookStrategiesData }> {
   const res = await apiFetch(`/api/analyze/${encodeURIComponent(ticker)}/knowledge-strategies`)
   if (!res.ok) {
     const detail = await res.json().catch(() => ({}))
