@@ -62,7 +62,10 @@ class RSIMeanReversionStrategy(BaseStrategy):
 
     def should_exit(self, snapshot: SignalSnapshot, trade: Trade) -> bool:
         rsi = snapshot.momentum.get("rsi")
-        if rsi is not None and rsi >= 55:
+        if rsi is not None and rsi >= 65:
+            return True
+        nearest_resistance = snapshot.support_resistance.get("nearest_resistance")
+        if nearest_resistance and snapshot.price >= nearest_resistance:
             return True
         return False
 
@@ -103,16 +106,23 @@ class RSIMeanReversionStrategy(BaseStrategy):
         if not atr:
             return None
         stop = price - 1.5 * atr
+        if not self._stop_is_valid(price, stop, atr):
+            return None
         bb_middle = volatility.get("bb_middle")
         target = bb_middle if bb_middle else price + 2.0 * atr
         raw_risk = price - stop
         rr = (target - price) / raw_risk if raw_risk > 0 else 0.0
+        # Entry zone from swing_setup support — same logic as S1 (price at support on oversold)
+        swing = snapshot.swing_setup or {}
+        entry_zone = swing.get("risk", {}).get("entry_zone", {})
         return RiskLevels(
             entry_price=price,
             stop_loss=round(stop, 4),
             target=round(target, 4),
             risk_reward=round(rr, 2),
             atr=atr,
+            entry_zone_low=entry_zone.get("low") if isinstance(entry_zone, dict) else None,
+            entry_zone_high=entry_zone.get("high") if isinstance(entry_zone, dict) else None,
         )
 
     def evaluate(self, snapshot) -> object:

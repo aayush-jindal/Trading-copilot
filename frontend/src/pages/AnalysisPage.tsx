@@ -5,6 +5,7 @@ import {
   fetchAnalysis,
   fetchKnowledgeStrategies,
   fetchPrices,
+  fetchStrategies,
   getNotifications,
   getWatchlist,
   removeFromWatchlist,
@@ -16,13 +17,14 @@ import SearchBar from '../components/SearchBar'
 import PriceChart from '../components/PriceChart'
 import SignalPanel from '../components/SignalPanel'
 import SwingSetupPanel from '../components/SwingSetupPanel'
+import StrategyPanel from '../components/StrategyPanel'
 import NarrativePanel from '../components/NarrativePanel'
 import BookStrategiesPanel from '../components/BookStrategiesPanel'
 import TickerCard from '../components/TickerCard'
 import LoadingSkeleton from '../components/LoadingSkeleton'
 import { useAuth } from '../context/AuthContext'
 import { OptionsContent } from './OptionsPage'
-import type { AnalysisResponse, PriceBar, TickerInfo } from '../types'
+import type { AnalysisResponse, PriceBar, StrategyResult, TickerInfo } from '../types'
 
 const DEFAULT_DAYS = 365
 
@@ -56,6 +58,7 @@ export default function AnalysisPage() {
   const [isLoading, setIsLoading]               = useState(false)
   const [isStreaming, setIsStreaming]            = useState(false)
   const [error, setError]                       = useState<string | null>(null)
+  const [strategies, setStrategies]             = useState<StrategyResult[]>([])
   const [bookStrategies, setBookStrategies]     = useState<string | null>(null)
   const [isLoadingBook, setIsLoadingBook]       = useState(false)
   const [bookError, setBookError]               = useState<string | null>(null)
@@ -116,6 +119,7 @@ export default function AnalysisPage() {
     setTickerInfo(null)
     setPrices([])
     setAnalysis(null)
+    setStrategies([])
     setNarrative('')
     setError(null)
     setIsLoading(true)
@@ -125,13 +129,18 @@ export default function AnalysisPage() {
     setIsLoadingBook(true)
 
     try {
-      const [priceRes, analysisRes] = await Promise.all([
+      const [priceRes, analysisRes, strategiesData] = await Promise.all([
         fetchPrices(ticker, days + 200),
         fetchAnalysis(ticker),
+        // fetchStrategies is in the same Promise.all so it fires with the same
+        // ticker context — prevents stale strategies from a previous search showing
+        // alongside analysis from a new one. Failures silently return [].
+        fetchStrategies(ticker).catch(() => [] as StrategyResult[]),
       ])
       setTickerInfo(priceRes.ticker)
       setPrices(priceRes.prices)
       setAnalysis(analysisRes)
+      setStrategies(strategiesData)
       setHistory((prev) => saveHistory(ticker, prev))
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load data')
@@ -336,6 +345,21 @@ export default function AnalysisPage() {
                   supportStrength={analysis.support_resistance.support_strength}
                   resistanceStrength={analysis.support_resistance.resistance_strength}
                 />
+              </div>
+            )}
+
+            {/* Strategy panels — sorted ENTRY first, then by score descending */}
+            {strategies.length > 0 && (
+              <div className="flex flex-col gap-3 [animation-delay:140ms]">
+                {[...strategies]
+                  .sort((a, b) => {
+                    if (a.verdict === 'ENTRY' && b.verdict !== 'ENTRY') return -1
+                    if (b.verdict === 'ENTRY' && a.verdict !== 'ENTRY') return 1
+                    return b.score - a.score
+                  })
+                  .map((result, i) => (
+                    <StrategyPanel key={`${result.name}-${i}`} result={result} />
+                  ))}
               </div>
             )}
 

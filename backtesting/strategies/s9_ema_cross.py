@@ -73,6 +73,12 @@ class EMACrossStrategy(BaseStrategy):
         ema21 = trend.get("ema_21")
         if ema9 is not None and ema21 is not None and ema9 < ema21:
             return True
+        rsi = snapshot.momentum.get("rsi")
+        if rsi is not None and rsi >= 70:
+            return True
+        nearest_resistance = snapshot.support_resistance.get("nearest_resistance")
+        if nearest_resistance and snapshot.price >= nearest_resistance:
+            return True
         return False
 
     def _check_conditions(self, snapshot) -> list:
@@ -127,12 +133,18 @@ class EMACrossStrategy(BaseStrategy):
         target = sr.get("nearest_resistance") or price + 2.0 * atr
         raw_risk = price - ema21
         rr = (target - price) / raw_risk if raw_risk > 0 else 0.0
+        # Entry zone sits between the two EMAs — ideal pullback re-entry after the cross
+        ema9 = trend.get("ema_9") or price
+        entry_zone_low = round(min(ema9, ema21), 4)
+        entry_zone_high = round(max(ema9, ema21), 4)
         return RiskLevels(
             entry_price=price,
             stop_loss=round(ema21, 4),
             target=round(target, 4),
             risk_reward=round(rr, 2),
             atr=atr,
+            entry_zone_low=entry_zone_low,
+            entry_zone_high=entry_zone_high,
         )
 
     def evaluate(self, snapshot) -> object:

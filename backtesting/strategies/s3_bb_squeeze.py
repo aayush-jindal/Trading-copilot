@@ -71,6 +71,14 @@ class BBSqueezeStrategy(BaseStrategy):
         if snapshot.volume.get("obv_trend") == "FALLING":
             return True
 
+        rsi = snapshot.momentum.get("rsi")
+        if rsi is not None and rsi >= 70:
+            return True
+
+        nearest_resistance = snapshot.support_resistance.get("nearest_resistance")
+        if nearest_resistance and snapshot.price >= nearest_resistance:
+            return True
+
         return False
 
     def _check_conditions(self, snapshot) -> list:
@@ -118,15 +126,23 @@ class BBSqueezeStrategy(BaseStrategy):
         if not atr:
             return None
         bb_lower = vol.get("bb_lower") or round(price * 0.95, 4)
+        if not self._stop_is_valid(price, bb_lower, atr):
+            return None
         target = price + 2.0 * atr
         raw_risk = price - bb_lower
         rr = (target - price) / raw_risk if raw_risk > 0 else 0.0
+        # Entry zone sits above the upper Bollinger Band: low=bb_upper, high=bb_upper + 0.5*ATR
+        bb_upper = vol.get("bb_upper")
+        entry_zone_low = bb_upper if bb_upper else None
+        entry_zone_high = round(bb_upper + 0.5 * atr, 4) if bb_upper else None
         return RiskLevels(
             entry_price=price,
             stop_loss=round(bb_lower, 4),
             target=round(target, 4),
             risk_reward=round(rr, 2),
             atr=atr,
+            entry_zone_low=entry_zone_low,
+            entry_zone_high=entry_zone_high,
         )
 
     def evaluate(self, snapshot) -> object:

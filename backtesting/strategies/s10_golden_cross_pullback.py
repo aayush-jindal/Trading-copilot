@@ -74,6 +74,12 @@ class GoldenCrossPullbackStrategy(BaseStrategy):
         sma50 = trend.get("sma_50")
         if sma50 is not None and price < sma50:
             return True
+        rsi = snapshot.momentum.get("rsi")
+        if rsi is not None and rsi >= 70:
+            return True
+        nearest_resistance = snapshot.support_resistance.get("nearest_resistance")
+        if nearest_resistance and price >= nearest_resistance:
+            return True
         return False
 
     def _check_conditions(self, snapshot) -> list:

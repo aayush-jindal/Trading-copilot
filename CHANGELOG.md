@@ -2,6 +2,176 @@
 
 ---
 
+## 2026-03-18 — Fix: backtesting/ volume mount added to docker-compose.yml
+
+### File modified
+- `docker/docker-compose.yml` (frozen file, modified by explicit user request)
+  - Added `../backtesting:/app/backtesting` volume mount to the `api` service alongside the other
+    dev mounts (`app/`, `tools/`, etc.)
+  - Root cause: `backtesting/` was only present in the Docker image at build time. On container
+    restart/recreation it disappeared, causing `ModuleNotFoundError: No module named 'backtesting'`
+    and preventing the API from starting (login/signup failures).
+  - With this mount, the live host directory is used — changes to strategy files are reflected
+    immediately without a rebuild, and the module survives container restarts.
+
+---
+
+## 2026-03-18 — Phase 6, Tasks 6.5 + 6.6: ScannerPage and TradeTrackerPage
+
+### Files created
+- `frontend/src/pages/ScannerPage.tsx` — New page at /scanner.
+  Fetches /scan/watchlist on mount and on Refresh button click. Loading skeleton visible during
+  the 5–10s fetch. Compact ScanRow list (ticker, type chip, strategy name, score, verdict badge,
+  entry/stop/target/R:R/shares). Results sorted ENTRY-first then score descending. Clicking a
+  row navigates to `/?ticker={ticker}`. Empty state when watchlist has no setups firing.
+- `frontend/src/pages/TradeTrackerPage.tsx` — New page at /trades.
+  Open trades table with columns: Ticker, Strategy, Entry, Stop, Target, Shares, R:R, Current R
+  (green/red), Alert (amber ⚠ for APPROACHING_STOP, green ✓ for AT_TARGET), Action (Close).
+  Close button re-fetches from server (not optimistic). Log Trade form with ticker input, strategy
+  dropdown (static 6-strategy list, auto-populates strategy_type), price inputs, shares. Errors
+  displayed inline. No charts, no edit — close only.
+
+### File modified
+- `frontend/src/App.tsx` — Added /scanner and /trades routes (both protected), and imported
+  ScannerPage + TradeTrackerPage. No existing routes or pages modified.
+
+`npx tsc --noEmit` zero errors.
+
+---
+
+## 2026-03-18 — Phase 6, Task 6.4: Strategy panels added to AnalysisPage
+
+### File modified
+- `frontend/src/pages/AnalysisPage.tsx` — Additive changes only; no existing state or logic modified:
+  - Added `strategies` state (StrategyResult[], initialized to [])
+  - Added `fetchStrategies` and `StrategyPanel` imports
+  - `fetchStrategies(ticker)` added to the SAME Promise.all as fetchPrices/fetchAnalysis — same
+    ticker context, prevents stale results. Failures caught and silently return [] so analysis panel
+    is never broken by a strategy fetch error.
+  - `setStrategies([])` added to the reset block in handleSearch
+  - StrategyPanels rendered below SwingSetupPanel, sorted ENTRY-first then score descending
+  - SwingSetupPanel untouched
+
+`npx tsc --noEmit` zero errors.
+
+---
+
+## 2026-03-18 — Phase 6, Task 6.3: StrategyPanel component
+
+### File created
+- `frontend/src/components/StrategyPanel.tsx` — Reusable component that renders any StrategyResult.
+  Color-coded by strategy type (teal=trend, purple=reversion, amber=breakout, blue=rotation).
+  Layout matches SwingSetupPanel: header with name+type badge+verdict badge, score bar, two-column body.
+  Left column: conditions list with pass/fail icons, label, value. Right column: risk levels with
+  entry zone (null-guarded), stop, target, R:R, ATR (null-guarded), position_size (null-guarded).
+  Log Trade button shown only when verdict=ENTRY and onLogTrade callback is provided.
+  Props: result (StrategyResult), onLogTrade (optional callback — no API calls in this component).
+  `npx tsc --noEmit` zero errors.
+
+---
+
+## 2026-03-18 — Phase 6, Task 6.2: API call functions for strategies and trades
+
+### File modified
+- `frontend/src/api/client.ts` — Added 7 new API functions (no existing functions modified):
+  - `fetchStrategies(ticker)` — GET /strategies/{ticker} → StrategyResult[]
+  - `scanWatchlist()` — GET /strategies/scan/watchlist → StrategyResult[]
+  - `fetchUserSettings()` — GET /strategies/settings → UserSettings
+  - `updateUserSettings(settings)` — PATCH /strategies/settings → UserSettings
+  - `fetchOpenTrades()` — GET /trades/ → OpenTrade[]
+  - `logTrade(trade)` — POST /trades/ with Omit<OpenTrade, server-computed fields> → OpenTrade
+  - `closeTrade(tradeId)` — DELETE /trades/{id} → void
+
+`npx tsc --noEmit` zero errors.
+
+---
+
+## 2026-03-18 — Phase 6, Task 6.1: TypeScript types for strategy scanner and trade tracker
+
+### File modified
+- `frontend/src/types/index.ts` — Added 7 new interfaces/types (no existing types modified):
+  - `Condition` — mirrors `backtesting/base.py` Condition dataclass
+  - `RiskLevels` — mirrors `backtesting/base.py` RiskLevels; optional fields: atr, entry_zone_low, entry_zone_high, position_size
+  - `StrategyType` — union of 4 valid strategy type strings
+  - `Verdict` — union of 3 valid verdict strings
+  - `StrategyResult` — mirrors StrategyResult dataclass; ticker is optional (only in scan results)
+  - `OpenTrade` — mirrors TradeResponse from app/models.py; computed fields (current_price, current_r, exit_alert) optional
+  - `UserSettings` — mirrors UserSettings from app/models.py
+
+`npx tsc --noEmit` zero errors.
+
+---
+
+## 2026-03-18 — Strategy consistency pass + test_strategies.py (211 tests)
+
+### Files created
+- `tests/test_strategies.py` — New comprehensive strategy contract/correctness test suite (211 tests).
+  Covers: `TestContract`, `TestConditionStruct`, `TestComputeRisk`, `TestEntryAndStops`, `TestShouldExit`, `TestADR015`.
+  Parametrized over all 7 strategy classes; uses `make_snapshot()` helper for reproducible snapshots.
+
+### Files modified
+- `backtesting/strategies/s2_rsi_reversion.py`
+  - `should_exit`: raised RSI threshold 55→65; added `nearest_resistance` exit
+  - `_compute_risk`: added `_stop_is_valid` guard; added `entry_zone_low/high` from `swing_setup.risk.entry_zone`
+
+- `backtesting/strategies/s3_bb_squeeze.py`
+  - `should_exit`: added RSI >= 70 exit; added `nearest_resistance` exit
+  - `_compute_risk`: added `_stop_is_valid` guard; added `entry_zone` (bb_upper … bb_upper+0.5×ATR)
+
+- `backtesting/strategies/s7_macd_cross.py`
+  - `should_exit`: added `nearest_resistance` exit (RSI >= 70 + bearish MACD were already present)
+  - `_compute_risk`: added `_stop_is_valid` guard; added `entry_zone` (±0.25×ATR around entry)
+
+- `backtesting/strategies/s8_stochastic_cross.py`
+  - `should_exit`: added RSI >= 65 exit; added `nearest_resistance` exit
+  - `_compute_risk`: added `entry_zone_low/high` from `swing_setup.risk.entry_zone`
+
+- `backtesting/strategies/s9_ema_cross.py`
+  - `should_exit`: added RSI >= 70 exit; added `nearest_resistance` exit
+  - `_compute_risk`: added `entry_zone` between EMA9 and EMA21
+
+- `backtesting/strategies/s10_golden_cross_pullback.py`
+  - `should_exit`: added RSI >= 70 exit; added `nearest_resistance` exit
+  - Reason: required to satisfy `test_exits_when_rsi_is_80` and `test_exits_when_price_at_resistance`
+    contract tests that all strategies must exit on these universal signals
+
+### Docker sync fix
+The `backtesting/` directory is not volume-mounted in docker-compose, so updated strategy files
+were copied to the running container with `docker cp`. All 382 tests pass (171 pre-existing + 211 new).
+
+---
+
+## 2026-03-18 — Fix: TestWeeklyTrend flaky failures (pandas 2.2+ date_range off-by-one)
+
+### Root cause
+`_make_weekly_bullish_df` and `_make_weekly_bearish_df` in `tests/test_ta_engine.py`
+used `pd.date_range(end=pd.Timestamp.today().normalize(), periods=n, freq="W-FRI")`.
+
+In pandas 2.2+, when `end` does not fall on the weekly anchor (i.e. today is not a
+Friday), the end date is treated as exclusive of the last interval. This causes the
+date range to return `n-1` periods instead of `n`. The data arrays (`np.linspace`,
+`np.ones`) were still sized `n`, producing a DataFrame construction error:
+`ValueError: Length of values (60) does not match length of index (59)`.
+
+The failure was **day-of-week dependent** — it only manifested on non-Friday days,
+making it appear intermittent. The test had no bug on the logic side; only the
+date anchor was fragile.
+
+### Fix
+Replaced `end=pd.Timestamp.today().normalize()` with a fixed Friday anchor
+`end=pd.Timestamp("2024-01-05")` in both helper functions. Unit tests have no
+reason to depend on the current date — they need `n` stable weekly bars with a
+known trend. Pinning to a deterministic Friday guarantees pandas always returns
+exactly `n` periods, regardless of which day of the week the test suite runs.
+
+### Result
+All 171 tests now pass (previously 164 passed, 7 failed).
+
+### Modified
+- `tests/test_ta_engine.py`: fixed `_make_weekly_bullish_df` and `_make_weekly_bearish_df`
+
+---
+
 ## 2026-03-18 — Docs: module and function docstrings across all non-frozen files
 
 Added module-level docstrings, function/method docstrings, and inline comments

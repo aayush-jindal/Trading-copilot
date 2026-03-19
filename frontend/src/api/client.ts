@@ -1,8 +1,11 @@
 import type {
   AnalysisResponse,
   Notification,
+  OpenTrade,
   OptionsScanResponse,
   PriceHistoryResponse,
+  StrategyResult,
+  UserSettings,
   WatchlistDashboardItem,
   WatchlistItem,
 } from '../types'
@@ -206,4 +209,71 @@ export async function getNotifications(): Promise<Notification[]> {
 
 export async function markAllNotificationsRead(): Promise<void> {
   await apiFetch('/api/notifications/read-all', { method: 'PATCH' })
+}
+
+// ── Strategy scanner ───────────────────────────────────────────────────────────
+
+export async function fetchStrategies(ticker: string): Promise<StrategyResult[]> {
+  const res = await apiFetch(`/api/strategies/${encodeURIComponent(ticker)}`)
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({}))
+    throw new Error((detail as { detail?: string })?.detail ?? `Failed to fetch strategies (${res.status})`)
+  }
+  return res.json()
+}
+
+export async function scanWatchlist(): Promise<StrategyResult[]> {
+  const res = await apiFetch('/api/strategies/scan/watchlist')
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({}))
+    throw new Error((detail as { detail?: string })?.detail ?? `Watchlist scan failed (${res.status})`)
+  }
+  return res.json()
+}
+
+export async function fetchUserSettings(): Promise<UserSettings> {
+  const res = await apiFetch('/api/strategies/settings')
+  if (!res.ok) throw new Error('Failed to fetch user settings')
+  return res.json()
+}
+
+export async function updateUserSettings(settings: UserSettings): Promise<UserSettings> {
+  const res = await apiFetch('/api/strategies/settings', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(settings),
+  })
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({}))
+    throw new Error((detail as { detail?: string })?.detail ?? `Failed to update settings (${res.status})`)
+  }
+  return res.json()
+}
+
+// ── Trade tracker ──────────────────────────────────────────────────────────────
+
+export async function fetchOpenTrades(): Promise<OpenTrade[]> {
+  const res = await apiFetch('/api/trades/')
+  if (!res.ok) throw new Error('Failed to fetch open trades')
+  return res.json()
+}
+
+export async function logTrade(
+  trade: Omit<OpenTrade, 'id' | 'entry_date' | 'current_price' | 'current_r' | 'exit_alert'>
+): Promise<OpenTrade> {
+  const res = await apiFetch('/api/trades/', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(trade),
+  })
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({}))
+    throw new Error((detail as { detail?: string })?.detail ?? `Failed to log trade (${res.status})`)
+  }
+  return res.json()
+}
+
+export async function closeTrade(tradeId: number): Promise<void> {
+  const res = await apiFetch(`/api/trades/${tradeId}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error(`Failed to close trade ${tradeId}`)
 }

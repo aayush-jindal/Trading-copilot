@@ -1,83 +1,69 @@
 # Phase 6 — Frontend: strategy panels, scanner page, trade tracker
 
 ## Before starting
+
 Confirm phase5.md complete checklist is fully checked off.
-All backend endpoints must be working before touching the frontend.
+Verify all backend endpoints work before touching any frontend file:
+
+```bash
+TOKEN=$(curl -s -X POST http://localhost:8000/auth/login \
+  -d "username=admin&password=changeme" | python3 -c \
+  "import sys,json; print(json.load(sys.stdin)['access_token'])")
+
+curl -s -X POST http://localhost:8000/trades/ \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"ticker":"SPY","strategy_name":"S7_MACDCross","strategy_type":"trend",
+       "entry_price":560.0,"stop_loss":551.0,"target":572.0,"shares":10}' \
+  | python3 -m json.tool
+
+curl -s http://localhost:8000/trades/ -H "Authorization: Bearer $TOKEN" \
+  | python3 -m json.tool
+
+curl -s -X DELETE http://localhost:8000/trades/1 -H "Authorization: Bearer $TOKEN"
+
+curl -s http://localhost:8000/trades/ -H "Authorization: Bearer $TOKEN" \
+  | python3 -m json.tool
+```
+
+All four must succeed. If any fail: fix Phase 5 first.
 
 ## Gate to advance to paper trading
 - StrategyPanel renders correctly for each strategy type
 - ScannerPage loads and displays ranked results from /scan/watchlist
 - TradeTrackerPage shows open trades with live R and exit alerts
 - AnalysisPage shows strategy panels below SwingSetupPanel
-- `./scripts/build.sh test` all original tests passing
+- `cd frontend && npx tsc --noEmit` zero errors
+- All existing pages and routes still work
 
 ---
 
-## Task 6.1 — Add TypeScript types for strategy responses
+## Task 6.1 — Add TypeScript types
 
 READS FIRST:
 - frontend/src/types/index.ts (full file — do not duplicate existing types)
-- app/routers/strategies.py (response shapes from phase 3)
-- app/routers/trades.py (TradeResponse shape from phase 5)
+- app/routers/strategies.py (read the actual response shapes)
+- app/routers/trades.py (read the actual response shapes)
+- backtesting/base.py (Condition, RiskLevels, StrategyResult field names)
 
 GOAL:
-Add types only. No components yet.
+Add TypeScript interfaces that match the Python response shapes exactly.
+Derive field names and optionality directly from the Python dataclasses
+and Pydantic models — do not invent names or add fields that do not exist
+in the backend response.
 
-MODIFY: frontend/src/types/index.ts
-
-Add:
-```typescript
-export interface Condition {
-  label: string;
-  passed: boolean;
-  value: string;
-  required: string;
-}
-
-export interface RiskLevels {
-  entry_price: number;
-  stop_loss: number;
-  target: number;
-  risk_reward: number;
-  atr?: number;
-  entry_zone_low?: number;
-  entry_zone_high?: number;
-  position_size?: number;
-}
-
-export type StrategyType = 'trend' | 'reversion' | 'breakout' | 'rotation';
-export type Verdict = 'ENTRY' | 'WATCH' | 'NO_TRADE';
-
-export interface StrategyResult {
-  name: string;
-  type: StrategyType;
-  verdict: Verdict;
-  score: number;
-  conditions: Condition[];
-  risk: RiskLevels | null;
-  ticker?: string;   // present in watchlist scan results
-}
-
-export interface OpenTrade {
-  id: number;
-  ticker: string;
-  strategy_name: string;
-  strategy_type: StrategyType;
-  entry_price: number;
-  stop_loss: number;
-  target: number;
-  shares: number;
-  entry_date: string;
-  current_price?: number;
-  current_r?: number;
-  exit_alert?: 'APPROACHING_STOP' | 'AT_TARGET' | null;
-}
-
-export interface UserSettings {
-  account_size: number;
-  risk_pct: number;
-}
-```
+Types to add to frontend/src/types/index.ts:
+- Condition — mirrors backtesting/base.py Condition dataclass
+- RiskLevels — mirrors backtesting/base.py RiskLevels dataclass.
+  entry_zone_low, entry_zone_high, atr, position_size are optional
+  because not all strategies set them.
+- StrategyType union — the four valid strategy type strings
+- Verdict union — the three valid verdict strings
+- StrategyResult — mirrors StrategyResult dataclass.
+  ticker is optional — only present in watchlist scan results.
+- OpenTrade — mirrors TradeResponse from app/models.py.
+  risk_reward is optional — matches TradeCreate definition.
+  current_price, current_r, exit_alert are optional — computed fields.
+- UserSettings — mirrors UserSettings from app/models.py
 
 DO NOT modify any existing types.
 
@@ -85,44 +71,34 @@ VERIFY:
 ```bash
 cd frontend && npx tsc --noEmit
 ```
-Must pass with zero errors.
 
-CHANGELOG:
-```
-## YYYY-MM-DD — Task 6.1: Strategy + trade TypeScript types
-### Modified
-- frontend/src/types/index.ts: added Condition, RiskLevels, StrategyResult,
-  OpenTrade, UserSettings, StrategyType, Verdict
-```
+CHANGELOG entry: types added to frontend/src/types/index.ts
 
 ---
 
-## Task 6.2 — Add API calls
+## Task 6.2 — Add API call functions
 
 READS FIRST:
-- frontend/src/api/client.ts (full file — use existing patterns exactly)
+- frontend/src/api/client.ts (full file — follow existing patterns exactly)
 - frontend/src/types/index.ts (after Task 6.1)
+- app/routers/strategies.py (endpoint paths and HTTP methods)
+- app/routers/trades.py (endpoint paths and HTTP methods)
 
 GOAL:
-Add API call functions only. No components.
+Add API functions to client.ts that call the Phase 3 and Phase 5 endpoints.
+Follow the exact same pattern as existing functions in client.ts — same
+error handling, same auth header approach, same response parsing.
 
-MODIFY: frontend/src/api/client.ts
-
-Add these functions following the exact pattern of existing functions:
-```typescript
-// Strategy scanner
-export async function fetchStrategies(ticker: string): Promise<StrategyResult[]>
-export async function scanWatchlist(): Promise<StrategyResult[]>
-
-// User settings
-export async function fetchUserSettings(): Promise<UserSettings>
-export async function updateUserSettings(settings: UserSettings): Promise<UserSettings>
-
-// Trade tracker
-export async function fetchOpenTrades(): Promise<OpenTrade[]>
-export async function logTrade(trade: Omit<OpenTrade, 'id' | 'entry_date' | 'current_price' | 'current_r' | 'exit_alert'>): Promise<OpenTrade>
-export async function closeTrade(tradeId: number): Promise<void>
-```
+Functions to add:
+- fetchStrategies(ticker) — GET /strategies/{ticker}
+- scanWatchlist() — GET /strategies/scan/watchlist
+- fetchUserSettings() — GET /strategies/settings
+- updateUserSettings(settings) — PATCH /strategies/settings
+- fetchOpenTrades() — GET /trades/
+- logTrade(trade) — POST /trades/. The request body is OpenTrade minus
+  the server-computed fields (id, entry_date, current_price, current_r,
+  exit_alert). Use the Omit utility type to derive this.
+- closeTrade(tradeId) — DELETE /trades/{id}
 
 DO NOT modify any existing API functions.
 
@@ -130,240 +106,181 @@ VERIFY:
 ```bash
 cd frontend && npx tsc --noEmit
 ```
-Zero errors.
 
-CHANGELOG:
-```
-## YYYY-MM-DD — Task 6.2: API call functions added
-### Modified
-- frontend/src/api/client.ts: fetchStrategies, scanWatchlist,
-  fetchUserSettings, updateUserSettings, fetchOpenTrades, logTrade, closeTrade
-```
+CHANGELOG entry: API functions added to frontend/src/api/client.ts
 
 ---
 
 ## Task 6.3 — Build StrategyPanel component
 
 READS FIRST:
-- frontend/src/components/SwingSetupPanel.tsx (FULL FILE — use as template)
+- frontend/src/components/SwingSetupPanel.tsx (full file — this is the
+  visual and structural template. Match its layout, spacing, and style exactly.)
 - frontend/src/types/index.ts (StrategyResult, Condition, RiskLevels)
 
 GOAL:
-One reusable component that renders any strategy result.
-Color coded by strategy type. Same layout as SwingSetupPanel.
+A single reusable component that renders any StrategyResult.
+Color coded by strategy type. Purely presentational — no API calls.
 
-CREATE: frontend/src/components/StrategyPanel.tsx
+Props: result (StrategyResult) and optional onLogTrade callback.
 
-Props: `{ result: StrategyResult; onLogTrade?: () => void }`
+Color scheme by strategy type — match the existing dark theme in SwingSetupPanel:
+- trend: teal
+- reversion: purple
+- breakout: amber
+- rotation: blue
 
-Color map (use Tailwind classes matching existing dark theme):
-```
-trend:     teal border/badge   — border-teal-500, bg-teal-900/20
-reversion: purple border/badge — border-purple-500, bg-purple-900/20
-breakout:  amber border/badge  — border-amber-500, bg-amber-900/20
-rotation:  blue border/badge   — border-blue-500, bg-blue-900/20
-```
+Layout — match SwingSetupPanel structure:
+- Header row: strategy name, type badge, verdict badge
+- Score bar: 0–100
+- Two-column body:
+  Left: conditions list. Each row shows pass/fail icon, label, value, required threshold.
+  Right: risk levels. Entry zone shown only when both entry_zone_low and
+  entry_zone_high are present. ATR shown only when present. Position size
+  shown only when present. All optional fields must be null-guarded.
+- Log Trade button: shown only when verdict is ENTRY and onLogTrade is provided.
 
-Layout (match SwingSetupPanel structure exactly):
-```
-[Header: strategy name + type badge]          [verdict badge]
-[Score bar: 0-100 with color]
+Verdict badge colors: ENTRY green, WATCH amber, NO_TRADE gray.
 
-CONDITIONS                    (left col)
-  ✓/✗ label          value    required
-  ... one row per condition
-
-RISK LEVELS                   (right col)
-  Entry zone          $X.XX – $X.XX
-  Stop loss           $X.XX  (red)
-  Target              $X.XX  (green)
-  R:R                 X.Xx
-  ATR 14              $X.XX
-  Position size       X shares
-
-[Log Trade button — only shown when verdict = ENTRY and onLogTrade provided]
-```
-
-Verdict badge colors:
-  ENTRY   → green
-  WATCH   → amber
-  NO_TRADE → gray (should never render — scanner filters these out)
-
-DO NOT build any modal or form in this task.
-DO NOT call any API from this component — it is purely presentational.
+DO NOT build any modal, form, or API call in this task.
 
 VERIFY:
 ```bash
 cd frontend && npx tsc --noEmit
 ```
-Zero type errors. Component exists and imports cleanly.
 
-CHANGELOG:
-```
-## YYYY-MM-DD — Task 6.3: StrategyPanel component
-### Added
-- frontend/src/components/StrategyPanel.tsx
-```
+CHANGELOG entry: StrategyPanel.tsx created
 
 ---
 
 ## Task 6.4 — Add strategy panels to AnalysisPage
 
 READS FIRST:
-- frontend/src/pages/AnalysisPage.tsx (FULL FILE)
-- frontend/src/components/SwingSetupPanel.tsx (where it sits in the layout)
+- frontend/src/pages/AnalysisPage.tsx (full file — understand the existing
+  fetch pattern completely before adding anything)
+- frontend/src/components/SwingSetupPanel.tsx (understand where it sits)
 - frontend/src/components/StrategyPanel.tsx (after Task 6.3)
 - frontend/src/api/client.ts (fetchStrategies)
 
 GOAL:
-When a ticker is analysed, fetch strategy results and render them
-below SwingSetupPanel. Ranked by score, ENTRY first.
+When a ticker is analysed, show strategy results below SwingSetupPanel.
 
-MODIFY: frontend/src/pages/AnalysisPage.tsx
-
-Add:
-  - State: `const [strategies, setStrategies] = useState<StrategyResult[]>([])`
-  - Fetch: call fetchStrategies(ticker) alongside existing analysis fetch
-  - Render: map strategies to StrategyPanel components below SwingSetupPanel
-  - Loading state: show skeleton while fetching (use existing LoadingSkeleton)
+Add to AnalysisPage.tsx:
+- State for strategies list, initialised to empty array
+- Fetch: call fetchStrategies(ticker) in the SAME effect or hook call as
+  the existing analysis fetch — same dependency array, fires together.
+  Do not create a separate effect. A separate effect on the same ticker
+  dependency causes a race where strategies from one ticker show alongside
+  analysis from another.
+- Render StrategyPanel for each result below SwingSetupPanel, sorted by
+  score descending with ENTRY verdicts first
+- Show loading skeleton while fetching (use the existing loading component)
+- If fetchStrategies fails, show nothing — do not break the analysis panel
 
 DO NOT remove or modify SwingSetupPanel.
 DO NOT change any existing state or fetch logic.
-Only add the new state, fetch, and render — nothing else.
+Additive only.
 
 VERIFY:
 Open http://localhost:5173, search SPY.
-Strategy panels must appear below SwingSetupPanel.
-Each panel shows conditions, risk levels, verdict.
+Strategy panels appear below SwingSetupPanel.
 
-CHANGELOG:
-```
-## YYYY-MM-DD — Task 6.4: Strategy panels added to AnalysisPage
-### Modified
-- frontend/src/pages/AnalysisPage.tsx: strategy panels below SwingSetupPanel
-```
+CHANGELOG entry: strategy panels added to AnalysisPage.tsx
 
 ---
 
 ## Task 6.5 — Build ScannerPage
 
 READS FIRST:
-- frontend/src/pages/WatchlistPage.tsx (use as layout reference)
-- frontend/src/components/StrategyPanel.tsx (after Task 6.3)
+- frontend/src/pages/WatchlistPage.tsx (layout and style reference)
+- frontend/src/App.tsx (understand routing and nav patterns)
 - frontend/src/api/client.ts (scanWatchlist)
 - frontend/src/types/index.ts (StrategyResult)
 
 GOAL:
-New page. Calls /scan/watchlist on load. Shows ranked list.
-Click on a result navigates to AnalysisPage for that ticker.
+New page at /scanner. Fetches /scan/watchlist on load. Shows ranked list.
+This is the primary morning workflow — compact list view, not full panels.
 
-CREATE: frontend/src/pages/ScannerPage.tsx
+Page structure:
+- Header: "Morning Scan", last run time (tracked client-side when fetch
+  resolves — not from the API response which has no timestamp), Refresh button
+- For each result: ticker, strategy type colour chip, strategy name, score,
+  verdict badge, entry/stop/target/R:R/shares on one line
+- Clicking a result navigates to /analysis/{ticker}
+- Empty state when watchlist has no setups firing
+- Loading skeleton while fetching
+- The /scan/watchlist call can take 5–10 seconds — the loading state must
+  be visible and the UI must not appear frozen
 
-Layout:
-```
-[Page header: "Morning Scan" + last run time + Refresh button]
+Add to App.tsx: /scanner route and nav link following existing patterns.
 
-[For each result in ranked order:]
-  [Ticker badge] [Strategy type color chip] [Strategy name]
-  [Score: XX/100] [Verdict badge]
-  [Entry $X.XX  Stop $X.XX  Target $X.XX  R:R X.Xx  Shares X]
-  [Click row → navigate to /analysis/{ticker}]
-
-[Empty state if no results: "No setups found in watchlist"]
-[Loading skeleton while fetching]
-```
-
-This is a compact list view — NOT the full StrategyPanel.
-Full detail is on AnalysisPage when you click through.
-
-MODIFY: frontend/src/App.tsx
-  Add route: /scanner → ScannerPage
-  Add nav link to Scanner page alongside existing nav items.
-
-DO NOT modify WatchlistPage, AnalysisPage, or any other existing page.
+DO NOT use the full StrategyPanel here — compact list rows only.
+DO NOT modify any existing page.
 
 VERIFY:
-Navigate to /scanner. Page loads. Shows results (or empty state).
-Clicking a result navigates to /analysis/{ticker}.
+Navigate to /scanner. Page loads with skeleton then results or empty state.
+Clicking a row navigates to /analysis/{ticker}.
 
-CHANGELOG:
-```
-## YYYY-MM-DD — Task 6.5: ScannerPage
-### Added
-- frontend/src/pages/ScannerPage.tsx
-### Modified
-- frontend/src/App.tsx: /scanner route + nav link
-```
+CHANGELOG entry: ScannerPage.tsx created, /scanner route added to App.tsx
 
 ---
 
 ## Task 6.6 — Build TradeTrackerPage
 
 READS FIRST:
-- frontend/src/pages/ScannerPage.tsx (use layout conventions)
-- frontend/src/api/client.ts (fetchOpenTrades, closeTrade, logTrade)
+- frontend/src/pages/ScannerPage.tsx (layout conventions from Task 6.5)
+- frontend/src/App.tsx (routing and nav patterns)
+- frontend/src/api/client.ts (fetchOpenTrades, logTrade, closeTrade)
 - frontend/src/types/index.ts (OpenTrade)
-- frontend/src/components/StrategyPanel.tsx (Log Trade button pattern)
 
 GOAL:
-Page showing open trades with live R and exit alerts.
-Log trade form. Close trade button.
+New page at /trades. Shows open trades with live R and exit alerts.
+Log trade form below the table.
 
-CREATE: frontend/src/pages/TradeTrackerPage.tsx
+Open trades table columns:
+Ticker, Strategy, Entry, Stop, Target, Shares, R:R, Current R, Alert, Action.
+Current R: green when positive, red when negative.
+Exit alert: amber warning icon for APPROACHING_STOP, green check for AT_TARGET.
 
-Sections:
+Log trade form:
+- Ticker input (free text)
+- Strategy dropdown — static list, do not call fetchStrategies.
+  The six validated strategy names are known at build time: S1_TrendPullback,
+  S2_RSIMeanReversion, S3_BBSqueeze, S7_MACDCross, S8_StochasticCross,
+  S9_EMACross. When a strategy is selected, auto-populate strategy_type.
+- Entry, Stop, Target (price inputs), Shares (integer input)
+- Log Trade button
 
-1. Open trades table:
-```
-Ticker | Strategy | Entry | Stop | Target | Shares | R:R | Current R | Alert | Action
-AAPL   | S2 RSI   | $189  | $175 | $201   | 22     | 1.4x| +0.84R ✓  |       | Close
-JPM    | S1 Trend | $224  | $218 | $231   | 18     | 1.2x| -0.31R    | ⚠ Stop| Close
-```
-Current R: green if > 0, red if < 0.
-Exit alert: amber ⚠ if APPROACHING_STOP, green ✓ if AT_TARGET.
+After closing a trade: call fetchOpenTrades() to re-fetch from the server.
+Do not filter local state optimistically — re-fetch is the source of truth.
 
-2. Log trade form (below table):
-```
-[Ticker input] [Strategy dropdown — validated strategies only]
-[Entry $] [Stop $] [Target $] [Shares]
-[Log Trade button]
-```
-Strategy dropdown populated from fetchStrategies — only ENTRY verdicts.
-Or allow manual entry with free text strategy name.
+Add to App.tsx: /trades route and nav link.
 
-MODIFY: frontend/src/App.tsx
-  Add route: /trades → TradeTrackerPage
-  Add nav link.
-
-DO NOT build any chart or visualisation. Table only.
-DO NOT add editing of existing trades — close only.
+DO NOT build charts. Table only.
+DO NOT allow editing trades — close only.
 
 VERIFY:
-Navigate to /trades. Table shows open trades (or empty state).
+Navigate to /trades. Empty state shown.
 Log a test trade. It appears in the table with live R.
-Close button removes it from the table.
+Close it. Table returns to empty state.
 
-CHANGELOG:
-```
-## YYYY-MM-DD — Task 6.6: TradeTrackerPage
-### Added
-- frontend/src/pages/TradeTrackerPage.tsx
-### Modified
-- frontend/src/App.tsx: /trades route + nav link
-```
+CHANGELOG entry: TradeTrackerPage.tsx created, /trades route added to App.tsx
 
 ---
 
 ## Phase 6 complete checklist
 
-- [ ] StrategyPanel renders correctly for all 4 strategy types
+- [ ] `cd frontend && npx tsc --noEmit` — zero type errors
+- [ ] StrategyPanel renders for all 4 strategy type colours
+- [ ] Optional risk fields (entry_zone, atr, position_size) null-guarded in panel
 - [ ] AnalysisPage shows strategy panels below SwingSetupPanel
-- [ ] ScannerPage loads /scan/watchlist and shows ranked list
+- [ ] Strategy fetch fires in same effect as existing analysis fetch
+- [ ] ScannerPage loads and shows ranked compact results
+- [ ] ScannerPage shows loading state during /scan/watchlist call
 - [ ] Clicking scanner result navigates to AnalysisPage
 - [ ] TradeTrackerPage shows open trades with live R and alerts
-- [ ] Log trade form works
-- [ ] Close trade removes from open trades
-- [ ] `./scripts/build.sh test` — all original tests passing
-- [ ] `cd frontend && npx tsc --noEmit` — zero type errors
+- [ ] Log trade form works with static strategy dropdown
+- [ ] Close trade re-fetches from server
 - [ ] SwingSetupPanel untouched
 - [ ] All existing pages and routes still work
+- [ ] `./scripts/build.sh test` passes

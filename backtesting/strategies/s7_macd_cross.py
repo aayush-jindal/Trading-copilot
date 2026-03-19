@@ -53,6 +53,9 @@ class MACDCrossStrategy(BaseStrategy):
         rsi = snapshot.momentum.get("rsi")
         if rsi is not None and rsi >= 70:
             return True
+        nearest_resistance = snapshot.support_resistance.get("nearest_resistance")
+        if nearest_resistance and snapshot.price >= nearest_resistance:
+            return True
         return False
 
     def _check_conditions(self, snapshot) -> list:
@@ -98,15 +101,20 @@ class MACDCrossStrategy(BaseStrategy):
         if not atr:
             return None
         stop = price - atr
+        if not self._stop_is_valid(price, stop, atr):
+            return None
         target = sr.get("nearest_resistance") or price + 2.0 * atr
         raw_risk = price - stop
         rr = (target - price) / raw_risk if raw_risk > 0 else 0.0
+        # Entry zone tight around the crossover price: ±0.25×ATR
         return RiskLevels(
             entry_price=price,
             stop_loss=round(stop, 4),
             target=round(target, 4),
             risk_reward=round(rr, 2),
             atr=atr,
+            entry_zone_low=round(price - 0.25 * atr, 4),
+            entry_zone_high=round(price + 0.25 * atr, 4),
         )
 
     def evaluate(self, snapshot) -> object:
