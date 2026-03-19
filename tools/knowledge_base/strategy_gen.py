@@ -168,10 +168,14 @@ def generate_strategies(ticker: str, top_k: int = TOP_K_RETRIEVAL) -> dict:
     print("  Generating strategies via Claude…")
     response = _client().messages.create(
         model="claude-sonnet-4-6",
-        max_tokens=2000,
+        max_tokens=4096,
         temperature=0.2,
         system=_SYSTEM_PROMPT,
         messages=[{"role": "user", "content": user_message}],
     )
     raw = response.content[0].text.strip()
+    # Strip markdown code fences if the model wraps the JSON despite instructions
+    if raw.startswith("```"):
+        raw = raw.split("\n", 1)[-1]          # drop opening fence line
+        raw = raw.rsplit("```", 1)[0].strip()  # drop closing fence
     return json.loads(raw)

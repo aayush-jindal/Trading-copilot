@@ -2,6 +2,37 @@
 
 ---
 
+## 2026-03-18 — Fix: fetchKnowledgeStrategies return type corrected in client.ts
+
+### File modified
+- `frontend/src/api/client.ts` — Changed `fetchKnowledgeStrategies` return type from `{ ticker: string; strategies: string }` to `{ ticker: string; strategies: BookStrategiesData }`. Completes the TypeScript chain: API → state → prop. `npx tsc --noEmit` confirms zero errors.
+
+---
+
+## 2026-03-18 — Fix: JSONDecodeError in knowledge-strategies (markdown fences + max_tokens)
+
+### File modified
+- `tools/knowledge_base/strategy_gen.py` — Two fixes:
+  1. `max_tokens` raised 2000 → 4096: response was truncated mid-JSON for complex tickers.
+  2. Strip markdown code fences before `json.loads()`: despite the system prompt instructing
+     plain JSON, claude-sonnet-4-6 wraps responses in ```json ... ``` — causing
+     `JSONDecodeError: Expecting value: line 1 column 1 (char 0)` (empty parse target).
+     Fix: if raw starts with ``` , drop the opening fence line and trailing fence before parsing.
+
+---
+
+## 2026-03-18 — Fix: backtesting/ volume mount added to docker-compose.yml
+
+### File modified
+- `tools/knowledge_base/strategy_gen.py` — Raised `max_tokens` from 2000 → 4096.
+  Root cause: the JSON response (multiple strategies with conditions, sources, signals) frequently
+  exceeds 2000 tokens, causing Claude to truncate mid-string. The 500 error manifested as
+  `JSONDecodeError: Unterminated string starting at: line 84 column 5 (char 7691)` — char 7691
+  is consistent with a ~2000 token cutoff (~4 chars/token). 4096 gives enough headroom for the
+  full structured response.
+
+---
+
 ## 2026-03-18 — Fix: backtesting/ volume mount added to docker-compose.yml
 
 ### File modified

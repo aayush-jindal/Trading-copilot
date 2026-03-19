@@ -21,10 +21,10 @@ check() {
   local label="$1" result="$2"
   if [[ "$result" == "ok" ]]; then
     echo "  ✓  $label"
-    ((pass++))
+    pass=$((pass + 1))
   else
     echo "  ✗  $label — $result"
-    ((fail++))
+    fail=$((fail + 1))
   fi
 }
 

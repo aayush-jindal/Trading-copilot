@@ -53,18 +53,26 @@ def _result_to_dict(result) -> dict:
     Handles both single-target (target) and multi-target (target_1) strategies.
     """
     conditions = [
-        {"label": c.label, "passed": c.passed, "value": c.value, "required": c.required}
+        {
+            "label": str(c.label),
+            "passed": bool(c.passed),   # numpy.bool_ → native bool for JSON serialisation
+            "value": str(c.value),
+            "required": str(c.required),
+        }
         for c in result.conditions
     ]
     risk = None
     if result.risk is not None:
+        raw_target = getattr(result.risk, "target", None) or getattr(result.risk, "target_1", None)
         risk = {
-            "entry_price": result.risk.entry_price,
-            "stop_loss": result.risk.stop_loss,
-            "target": getattr(result.risk, "target", None) or getattr(result.risk, "target_1", None),
-            "risk_reward": result.risk.risk_reward,
-            "atr": result.risk.atr,
-            "position_size": result.risk.position_size,
+            "entry_price": float(result.risk.entry_price),
+            "stop_loss":   float(result.risk.stop_loss),
+            "target":      float(raw_target) if raw_target is not None else None,
+            "risk_reward": float(result.risk.risk_reward),
+            "atr":         float(result.risk.atr) if result.risk.atr is not None else None,
+            "entry_zone_low":  float(result.risk.entry_zone_low)  if result.risk.entry_zone_low  is not None else None,
+            "entry_zone_high": float(result.risk.entry_zone_high) if result.risk.entry_zone_high is not None else None,
+            "position_size":   int(result.risk.position_size)     if result.risk.position_size   is not None else None,
         }
     return {
         "name": result.name,
