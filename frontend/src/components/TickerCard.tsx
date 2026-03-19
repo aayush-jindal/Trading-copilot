@@ -42,10 +42,10 @@ export default function TickerCard({ info, price, dayChange, dayChangePct }: Tic
       <div className="flex items-center gap-4 sm:gap-6">
         <div className="flex flex-col items-end gap-1">
           <span className="text-2xl font-bold tabular-nums text-white">
-            ${price.toFixed(2)}
+            ${price != null ? price.toFixed(2) : '—'}
           </span>
           <span className={`text-xs px-2 py-0.5 rounded border font-mono font-medium ${changeColor} ${changeBg}`}>
-            {arrow} ${Math.abs(dayChange).toFixed(2)} ({Math.abs(dayChangePct).toFixed(2)}%)
+            {arrow} ${dayChange != null ? Math.abs(dayChange).toFixed(2) : '—'} ({dayChangePct != null ? Math.abs(dayChangePct).toFixed(2) : '—'}%)
           </span>
         </div>
 

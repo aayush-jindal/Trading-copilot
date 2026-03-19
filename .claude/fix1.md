@@ -21,3 +21,25 @@ List signals_to_watch if the array is non-empty
 
 Keep the existing header, loading state, and error state unchanged. Only change the prop type and the content render block. Match the existing amber colour scheme and glass style throughout.
 Also find where BookStrategiesPanel is used in AnalysisPage.tsx and update the prop being passed to match the new type — it is currently passing a string where it should pass the parsed dict.
+
+# # 1.2 ADD TO CACHE claude output
+
+Read tools/knowledge_base/strategy_gen.py, app/routers/analysis.py (find where /analyze/{ticker}/knowledge-strategies is handled), and app/database.py (understand the schema init pattern).
+Add a DB cache for book strategy results with these two changes:
+1. Add knowledge_strategy_cache table to app/database.py:
+
+ticker TEXT
+cache_date DATE
+result JSONB
+created_at TIMESTAMP DEFAULT NOW()
+Primary key on (ticker, cache_date)
+
+2. Add cache read/write in the knowledge-strategies route:
+
+Before calling generate_strategies(ticker): query cache for (ticker, today)
+If found: return cached result immediately, no Claude call
+If not found: call generate_strategies(ticker), store result in cache, return it
+
+The cache never invalidates within a trading day. Old entries can stay indefinitely — they are historical record. Do not add any expiry logic.
+Also change the frontend so BookStrategiesPanel is not fetched automatically on page load. Instead show a "Generate book analysis" button. When clicked, fetch and display. If a cached result exists for today it returns instantly. If not, it calls Claude and the user waits the few seconds.
+Do not change strategy_gen.py itself. The caching layer sits in the router.

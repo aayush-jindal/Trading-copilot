@@ -109,6 +109,70 @@ function computeMACD(closes: number[]) {
   return { macdLine, signalLine, histogram }
 }
 
+// ─── Crosshair tooltip ───────────────────────────────────────────────────────
+
+interface TooltipState {
+  time:   string
+  open:   number | null
+  high:   number | null
+  low:    number | null
+  close:  number | null
+  sma20:  number | null
+  sma50:  number | null
+  sma200: number | null
+  ema9:   number | null
+  ema21:  number | null
+  bbUp:   number | null
+  bbLo:   number | null
+  volume: number | null
+}
+
+function fmtP(n: number | null): string | null {
+  return n != null ? `$${n.toFixed(2)}` : null
+}
+
+function fmtVol(n: number | null): string | null {
+  if (n == null) return null
+  if (n >= 1e9) return `${(n / 1e9).toFixed(2)}B`
+  if (n >= 1e6) return `${(n / 1e6).toFixed(2)}M`
+  if (n >= 1e3) return `${(n / 1e3).toFixed(1)}K`
+  return n.toLocaleString()
+}
+
+function ChartTooltip({ data }: { data: TooltipState }) {
+  const upDown = data.close != null && data.open != null && data.close >= data.open
+
+  // Each row: [label, formatted value, text colour class]
+  const rows: [string, string, string][] = ([
+    ['O',        fmtP(data.open),   'text-gray-300'],
+    ['H',        fmtP(data.high),   'text-green-400'],
+    ['L',        fmtP(data.low),    'text-red-400'],
+    ['C',        fmtP(data.close),  upDown ? 'text-green-300' : 'text-red-300'],
+    ['SMA 20',   fmtP(data.sma20),  'text-blue-400'],
+    ['SMA 50',   fmtP(data.sma50),  'text-orange-400'],
+    ['SMA 200',  fmtP(data.sma200), 'text-red-400'],
+    ['EMA 9',    fmtP(data.ema9),   'text-violet-400'],
+    ['EMA 21',   fmtP(data.ema21),  'text-orange-300'],
+    ['BB Upper', fmtP(data.bbUp),   'text-gray-400'],
+    ['BB Lower', fmtP(data.bbLo),   'text-gray-400'],
+    ['Volume',   fmtVol(data.volume), 'text-gray-400'],
+  ] as [string, string | null, string][]).filter(([, v]) => v != null) as [string, string, string][]
+
+  return (
+    <div className="absolute top-2 left-2 z-10 bg-black/75 backdrop-blur-sm border border-white/10 rounded-lg px-3 py-2 pointer-events-none select-none">
+      <div className="text-[10px] text-gray-500 mb-1.5 font-mono">{data.time}</div>
+      <div className="flex flex-col gap-[3px] min-w-[130px]">
+        {rows.map(([label, val, color]) => (
+          <div key={label} className="flex items-center justify-between gap-5">
+            <span className="text-[10px] text-gray-500">{label}</span>
+            <span className={`text-[11px] font-mono font-semibold tabular-nums ${color}`}>{val}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 // ─── Shared chart theme ───────────────────────────────────────────────────────
 
 const THEME = {
@@ -145,6 +209,8 @@ function useChartInstance(
   ind: IndicatorState,
   days: number,
 ) {
+  const [tooltip, setTooltip] = useState<TooltipState | null>(null)
+
   const chartRef      = useRef<IChartApi | null>(null)
   const candleRef     = useRef<ISeriesApi<'Candlestick'> | null>(null)
   const sma20R        = useRef<ISeriesApi<'Line'> | null>(null)
@@ -190,23 +256,65 @@ function useChartInstance(
     volR.current    = chart.addHistogramSeries({ priceScaleId: '', priceFormat: { type: 'volume' } })
     chart.priceScale('').applyOptions({ scaleMargins: { top: 0.78, bottom: 0 } })
     chartRef.current = chart
-    return () => { chart.remove(); chartRef.current = null }
+
+    // Crosshair tooltip — reads series values directly from the param.seriesData Map.
+    // Series with empty data (toggled-off indicators) return undefined, which is filtered
+    // out by the ChartTooltip row filter, so only active indicators appear.
+    chart.subscribeCrosshairMove((param) => {
+      if (!param.point || !param.time || param.point.x < 0 || param.point.y < 0) {
+        setTooltip(null)
+        return
+      }
+      type LP = { value: number }
+      type CP = { open: number; high: number; low: number; close: number }
+      type HP = { value: number }
+      const c   = param.seriesData.get(candleRef.current!) as CP | undefined
+      const get = (ref: React.MutableRefObject<ISeriesApi<'Line'> | null>) =>
+        (param.seriesData.get(ref.current!) as LP | undefined)?.value ?? null
+      const vol = (param.seriesData.get(volR.current!) as HP | undefined)?.value ?? null
+      setTooltip({
+        time:   param.time as string,
+        open:   c?.open   ?? null,
+        high:   c?.high   ?? null,
+        low:    c?.low    ?? null,
+        close:  c?.close  ?? null,
+        sma20:  get(sma20R),
+        sma50:  get(sma50R),
+        sma200: get(sma200R),
+        ema9:   get(ema9R),
+        ema21:  get(ema21R),
+        bbUp:   get(bbUpR),
+        bbLo:   get(bbLoR),
+        volume: vol,
+      })
+    })
+
+    return () => { setTooltip(null); chart.remove(); chartRef.current = null }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Update main chart data
   useEffect(() => {
     if (!prices.length || !candleRef.current || !chartRef.current) return
-    const closes = prices.map(p => p.close)
+
+    // Drop any bars with null OHLC — lightweight-charts asserts all fields are numbers.
+    // Use cleanPrices for candlestick, volume, and indicator close values so all
+    // series share the same set of dates and NaN never enters the math helpers.
+    const cleanPrices = prices.filter(
+      p => p.open != null && p.high != null && p.low != null && p.close != null
+    )
+    if (!cleanPrices.length) return
+
+    const closes = cleanPrices.map(p => p.close)
 
     const ld = (arr: (number | null)[], ref: React.MutableRefObject<ISeriesApi<'Line'> | null>, active: boolean) => {
       if (!ref.current) return
       if (!active) { ref.current.setData([]); return }
-      setLineData(ref, arr, prices)
+      setLineData(ref, arr, cleanPrices)
     }
 
-    candleRef.current.setData(prices.map(p => ({
-      time: toTime(p.date), open: p.open, high: p.high, low: p.low, close: p.close,
-    })))
+    candleRef.current.setData(
+      cleanPrices.map(p => ({ time: toTime(p.date), open: p.open, high: p.high, low: p.low, close: p.close }))
+    )
 
     const m20   = sma(closes, 20)
     const m50   = sma(closes, 50)
@@ -227,19 +335,23 @@ function useChartInstance(
       if (!ind.volume) {
         volR.current.setData([])
       } else {
-        volR.current.setData(prices.map(p => ({
-          time: toTime(p.date), value: p.volume,
-          color: p.close >= p.open ? '#166534' : '#7f1d1d',
-        })))
+        volR.current.setData(
+          cleanPrices
+            .filter(p => p.volume != null)
+            .map(p => ({
+              time: toTime(p.date), value: p.volume,
+              color: p.close >= p.open ? '#166534' : '#7f1d1d',
+            }))
+        )
       }
     }
 
-    // Show only the user-selected window. `prices` may contain extra bars
+    // Show only the user-selected window. `cleanPrices` may contain extra bars
     // fetched as SMA warmup, so we set the viewport to the last `days` bars
     // rather than calling fitContent() which would show all history.
-    if (days > 0 && prices.length > days) {
-      const fromBar = prices[prices.length - days]
-      const toBar   = prices[prices.length - 1]
+    if (days > 0 && cleanPrices.length > days) {
+      const fromBar = cleanPrices[cleanPrices.length - days]
+      const toBar   = cleanPrices[cleanPrices.length - 1]
       chartRef.current.timeScale().setVisibleRange({
         from: toTime(fromBar.date),
         to:   toTime(toBar.date),
@@ -279,7 +391,8 @@ function useChartInstance(
   // RSI data update
   useEffect(() => {
     if (!ind.rsi || !rsiSeriesRef.current || !prices.length) return
-    setLineData(rsiSeriesRef, computeRSI(prices.map(p => p.close)), prices)
+    const cleanPrices = prices.filter(p => p.close != null)
+    setLineData(rsiSeriesRef, computeRSI(cleanPrices.map(p => p.close)), cleanPrices)
     rsiChartRef.current?.timeScale().fitContent()
   }, [prices, ind.rsi])
 
@@ -318,17 +431,18 @@ function useChartInstance(
   // MACD data update
   useEffect(() => {
     if (!ind.macd || !macdLineRef.current || !prices.length) return
-    const { macdLine, signalLine, histogram } = computeMACD(prices.map(p => p.close))
-    setLineData(macdLineRef, macdLine, prices)
-    setLineData(macdSignalRef, signalLine, prices)
+    const cleanPrices = prices.filter(p => p.close != null)
+    const { macdLine, signalLine, histogram } = computeMACD(cleanPrices.map(p => p.close))
+    setLineData(macdLineRef, macdLine, cleanPrices)
+    setLineData(macdSignalRef, signalLine, cleanPrices)
     macdHistRef.current?.setData(
-      histogram.map((v, i) => v != null ? { time: toTime(prices[i].date), value: v, color: v >= 0 ? '#166534' : '#7f1d1d' } : null)
+      histogram.map((v, i) => v != null ? { time: toTime(cleanPrices[i].date), value: v, color: v >= 0 ? '#166534' : '#7f1d1d' } : null)
         .filter((x): x is { time: Time; value: number; color: string } => x !== null)
     )
     macdChartRef.current?.timeScale().fitContent()
   }, [prices, ind.macd])
 
-  return { rsiContRef, macdContRef }
+  return { rsiContRef, macdContRef, tooltip }
 }
 
 // ─── Shared toolbar ───────────────────────────────────────────────────────────
@@ -418,7 +532,7 @@ function ChartModal({
   ticker?: string
 }) {
   const mainRef = useRef<HTMLDivElement>(null)
-  const { rsiContRef, macdContRef } = useChartInstance(mainRef, prices, ind, days)
+  const { rsiContRef, macdContRef, tooltip } = useChartInstance(mainRef, prices, ind, days)
 
   // Escape key + scroll lock
   useEffect(() => {
@@ -467,7 +581,10 @@ function ChartModal({
         <ChartToolbar ind={ind} toggle={toggle} days={days} onDaysChange={onDaysChange} />
 
         {/* Main chart — flex-1 works because parent has a fixed height */}
-        <div ref={mainRef} className="w-full flex-1 min-h-0" />
+        <div className="relative flex-1 min-h-0">
+          <div ref={mainRef} className="w-full h-full" />
+          {tooltip && <ChartTooltip data={tooltip} />}
+        </div>
 
         {/* RSI sub-pane */}
         {ind.rsi && (
@@ -516,7 +633,7 @@ export default function PriceChart({ prices, days, onDaysChange, ticker }: Price
     setInd(prev => ({ ...prev, [key]: !prev[key] }))
 
   const mainRef = useRef<HTMLDivElement>(null)
-  const { rsiContRef, macdContRef } = useChartInstance(mainRef, prices, ind, days)
+  const { rsiContRef, macdContRef, tooltip } = useChartInstance(mainRef, prices, ind, days)
 
   const expandBtn = (
     <button
@@ -536,7 +653,10 @@ export default function PriceChart({ prices, days, onDaysChange, ticker }: Price
           rightSlot={expandBtn}
         />
 
-        <div ref={mainRef} className="w-full h-[480px]" />
+        <div className="relative">
+          <div ref={mainRef} className="w-full h-[480px]" />
+          {tooltip && <ChartTooltip data={tooltip} />}
+        </div>
 
         {ind.rsi && (
           <div className="border-t border-white/10">

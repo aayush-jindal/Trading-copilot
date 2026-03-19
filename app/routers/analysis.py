@@ -55,10 +55,53 @@ def analyze(ticker: str):
 
 @router.get("/{ticker}/knowledge-strategies")
 def knowledge_strategies(ticker: str):
-    """RAG pipeline: live signals → book retrieval → Claude → grounded strategies."""
+    """RAG pipeline: live signals → book retrieval → Claude → grounded strategies.
+
+    Results are cached per (ticker, calendar date). On a cache hit the Claude
+    call is skipped and the cached dict is returned immediately.
+    """
+    from datetime import date
+
+    import psycopg2.extras
+
+    from app.database import get_db
+
+    symbol = ticker.upper()
+    today = date.today()
+
+    # ── Cache read ────────────────────────────────────────────────────────────
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT result FROM knowledge_strategy_cache WHERE ticker = %s AND cache_date = %s",
+            (symbol, today),
+        ).fetchone()
+    finally:
+        conn.close()
+
+    if row:
+        return {"ticker": symbol, "strategies": row["result"]}
+
+    # ── Generate via Claude ───────────────────────────────────────────────────
     try:
         from tools.knowledge_base.strategy_gen import generate_strategies  # lazy import
-        result = generate_strategies(ticker.upper())
-        return {"ticker": ticker.upper(), "strategies": result}
+        result = generate_strategies(symbol)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
+
+    # ── Cache write ───────────────────────────────────────────────────────────
+    conn = get_db()
+    try:
+        conn.execute(
+            """INSERT INTO knowledge_strategy_cache (ticker, cache_date, result)
+               VALUES (%s, %s, %s)
+               ON CONFLICT (ticker, cache_date) DO NOTHING""",
+            (symbol, today, psycopg2.extras.Json(result)),
+        )
+        conn.commit()
+    except Exception:
+        pass  # Cache write failure must not break the response
+    finally:
+        conn.close()
+
+    return {"ticker": symbol, "strategies": result}

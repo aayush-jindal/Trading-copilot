@@ -106,9 +106,11 @@ class StochasticCrossStrategy(BaseStrategy):
         atr = vol.get("atr")
         if not atr:
             return None
-        stop = sr.get("nearest_support") or price - atr
+        stop = sr.get("nearest_support") or (price - atr)
         if not self._stop_is_valid(price, stop, atr):
-            return None
+            stop = price - 1.5 * atr
+            if not self._stop_is_valid(price, stop, atr):
+                return None
         target = price + 2.0 * atr
         raw_risk = price - stop
         rr = (target - price) / raw_risk if raw_risk > 0 else 0.0
