@@ -6,6 +6,8 @@ import PlayerPage from './pages/PlayerPage'
 import SignupPage from './pages/SignupPage'
 import WatchlistPage from './pages/WatchlistPage'
 import OptionsPage from './pages/OptionsPage'
+import ScannerPage from './pages/ScannerPage'
+import TradeTrackerPage from './pages/TradeTrackerPage'
 import type { ReactNode } from 'react'
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
@@ -39,6 +41,22 @@ function AppRoutes() {
         element={
           <ProtectedRoute>
             <OptionsPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/scanner"
+        element={
+          <ProtectedRoute>
+            <ScannerPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/trades"
+        element={
+          <ProtectedRoute>
+            <TradeTrackerPage />
           </ProtectedRoute>
         }
       />

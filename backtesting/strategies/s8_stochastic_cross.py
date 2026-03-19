@@ -61,6 +61,12 @@ class StochasticCrossStrategy(BaseStrategy):
         stoch_k = (snapshot.momentum or {}).get("stochastic_k")
         if stoch_k is not None and stoch_k >= 80:
             return True
+        rsi = snapshot.momentum.get("rsi")
+        if rsi is not None and rsi >= 65:
+            return True
+        nearest_resistance = snapshot.support_resistance.get("nearest_resistance")
+        if nearest_resistance and snapshot.price >= nearest_resistance:
+            return True
         return False
 
     def _check_conditions(self, snapshot) -> list:
@@ -106,12 +112,18 @@ class StochasticCrossStrategy(BaseStrategy):
         target = price + 2.0 * atr
         raw_risk = price - stop
         rr = (target - price) / raw_risk if raw_risk > 0 else 0.0
+        # Entry zone from swing_setup support — stochastic cross below 20 fires at support,
+        # same conceptual entry zone as S1 and S2
+        swing = snapshot.swing_setup or {}
+        entry_zone = swing.get("risk", {}).get("entry_zone", {})
         return RiskLevels(
             entry_price=price,
             stop_loss=round(stop, 4),
             target=round(target, 4),
             risk_reward=round(rr, 2),
             atr=atr,
+            entry_zone_low=entry_zone.get("low") if isinstance(entry_zone, dict) else None,
+            entry_zone_high=entry_zone.get("high") if isinstance(entry_zone, dict) else None,
         )
 
     def evaluate(self, snapshot) -> object:

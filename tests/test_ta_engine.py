@@ -162,8 +162,18 @@ def _last_friday() -> pd.Timestamp:
 
 
 def _make_weekly_bullish_df(n: int = 60) -> pd.DataFrame:
-    """n weekly bars with a clean uptrend: price > SMA10 > SMA40."""
-    dates = pd.date_range(end=_last_friday(), periods=n, freq="W-FRI")
+    """n weekly bars with a clean uptrend: price > SMA10 > SMA40.
+
+    Uses a fixed Friday anchor (2024-01-05) so the date range always produces
+    exactly n periods regardless of which day of the week the test runs on.
+
+    Root cause of the previous flakiness: pd.date_range with end=today and
+    freq='W-FRI' produces n-1 dates in pandas 2.2+ whenever today is not a
+    Friday, because the end date falls between weekly anchors and is treated
+    as exclusive.  Pinning to a known Friday eliminates the edge case entirely.
+    """
+    _FIXED_FRIDAY = pd.Timestamp("2024-01-05")  # deterministic anchor (Friday)
+    dates = pd.date_range(end=_FIXED_FRIDAY, periods=n, freq="W-FRI")
     close = np.linspace(80, 130, n)   # steady climb → SMA10 > SMA40 throughout
     df = pd.DataFrame(
         {"open": close, "high": close + 1, "low": close - 1,
@@ -175,8 +185,13 @@ def _make_weekly_bullish_df(n: int = 60) -> pd.DataFrame:
 
 
 def _make_weekly_bearish_df(n: int = 60) -> pd.DataFrame:
-    """n weekly bars with a clean downtrend: price < SMA10 < SMA40."""
-    dates = pd.date_range(end=_last_friday(), periods=n, freq="W-FRI")
+    """n weekly bars with a clean downtrend: price < SMA10 < SMA40.
+
+    Uses the same fixed Friday anchor as _make_weekly_bullish_df to avoid
+    the pandas 2.2+ date_range off-by-one when today is not a Friday.
+    """
+    _FIXED_FRIDAY = pd.Timestamp("2024-01-05")  # deterministic anchor (Friday)
+    dates = pd.date_range(end=_FIXED_FRIDAY, periods=n, freq="W-FRI")
     close = np.linspace(130, 80, n)   # steady decline
     df = pd.DataFrame(
         {"open": close, "high": close + 1, "low": close - 1,

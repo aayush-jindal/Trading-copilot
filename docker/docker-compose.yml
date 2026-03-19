@@ -23,6 +23,7 @@ services:
       - "8000:8000"
     volumes:
       - ../app:/app/app
+      - ../backtesting:/app/backtesting
       - ../tools:/app/tools
       - ../resources:/app/resources
       - ../tests:/app/tests

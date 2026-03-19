@@ -293,3 +293,62 @@ export interface Notification {
   created_at: string
   is_read: boolean
 }
+
+// ── Strategy scanner ───────────────────────────────────────────────────────────
+
+export interface Condition {
+  label: string
+  passed: boolean
+  value: string
+  required: string
+}
+
+export interface RiskLevels {
+  entry_price: number
+  stop_loss: number
+  target: number
+  risk_reward: number
+  atr?: number | null
+  entry_zone_low?: number | null
+  entry_zone_high?: number | null
+  position_size?: number | null
+}
+
+export type StrategyType = 'trend' | 'reversion' | 'breakout' | 'rotation'
+
+export type Verdict = 'ENTRY' | 'WATCH' | 'NO_TRADE'
+
+export interface StrategyResult {
+  name: string
+  type: StrategyType
+  verdict: Verdict
+  score: number
+  conditions: Condition[]
+  risk: RiskLevels | null
+  ticker?: string | null
+}
+
+// ── Trade tracker ──────────────────────────────────────────────────────────────
+
+export interface OpenTrade {
+  id: number
+  ticker: string
+  strategy_name: string
+  strategy_type: string
+  entry_price: number
+  stop_loss: number
+  target: number
+  shares: number
+  entry_date: string
+  risk_reward?: number | null
+  current_price?: number | null
+  current_r?: number | null
+  exit_alert?: string | null
+}
+
+// ── User settings ──────────────────────────────────────────────────────────────
+
+export interface UserSettings {
+  account_size: number
+  risk_pct: number
+}
