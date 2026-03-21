@@ -250,6 +250,12 @@ export default function AnalysisPage() {
           >
             Watchlist
           </button>
+          <button
+            onClick={() => navigate('/player')}
+            className="hidden sm:block px-3.5 py-2 text-sm text-gray-400 hover:text-white font-medium rounded-lg hover:bg-white/5 transition-all"
+          >
+            Backtester
+          </button>
           {/* Divider */}
           <div className="hidden sm:block w-px h-5 bg-white/10 mx-1" />
 

@@ -2,6 +2,39 @@
 
 ---
 
+## 2026-03-20 — UX: add Backtester nav link to header
+
+### File modified
+- `frontend/src/pages/AnalysisPage.tsx` — Added "Backtester" button to the header nav bar, navigating to `/player`
+
+---
+
+## 2026-03-20 — Docs: created HOWTO.md
+
+### File created
+- `HOWTO.md` — Complete run guide covering quick start, all environment variables, build.sh commands, services/ports, smoke test, knowledge base CLI, test commands, backtesting, rebuild instructions, and Render deployment steps
+
+---
+
+## 2026-03-20 — Maintenance: rebase knowledge_base onto main
+
+### What changed
+- Rebased `knowledge_base` (12 commits) onto `main` to incorporate the `backplayer` commit
+- Resolved all merge conflicts, keeping changes from both branches throughout
+
+### Conflicts resolved
+- `app/database.py` — merged backtest player tables (`backtest_runs`, `backtest_signals`, `hourly_price_history`) with knowledge base tables (`knowledge_chunks`); corrected vector dimension to `1536` (OpenAI)
+- `app/main.py` — merged all router registrations: `options`, `player`, `strategies`, `trades` all present
+- `app/models.py` — merged `FourHConfirmation` (from backplayer) with `TradeCreate`/`TradeResponse` (from Phase 5)
+- `frontend/src/App.tsx` — merged all routes: `/options`, `/player`, `/scanner`, `/trades`
+- `CLAUDE.md` — merged qmd code search section with project rules
+- `tests/test_ta_engine.py` — took the fixed Friday anchor version (eliminates pandas 2.2+ flakiness)
+
+### Verified
+- `docker exec docker-api-1 python scripts/smoke_test.py` → 33/33 checks passed
+
+---
+
 ## 2026-03-19 — Feature: crosshair tooltip showing indicator values on hover (PriceChart.tsx)
 
 ### File modified
