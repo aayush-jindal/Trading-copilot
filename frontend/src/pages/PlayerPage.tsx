@@ -549,7 +549,6 @@ export default function PlayerPage() {
 
   // ── Render ─────────────────────────────────────────────────────────────────
   const selectedRun = runs.find((r) => r.run_id === selectedRunId) ?? null
-  const hasChart = candles.length > 0 && (runMarkerSets.length > 0 || candles.length > 0)
 
   return (
     <div style={S.page}>

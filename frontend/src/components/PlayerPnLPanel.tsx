@@ -108,34 +108,31 @@ export default function PlayerPnLPanel({
   useEffect(() => {
     if (!chartRef.current || !mainChart) return
     const pnlChart = chartRef.current
+    const onMainRangeChange = (range: any) => {
+      if (!range) return
+      if (syncingFromPnlRef.current) {
+        syncingFromPnlRef.current = false
+        return
+      }
+      syncingFromMainRef.current = true
+      pnlChart.timeScale().setVisibleLogicalRange(range)
+    }
+    const onPnlRangeChange = (range: any) => {
+      if (!range) return
+      if (syncingFromMainRef.current) {
+        syncingFromMainRef.current = false
+        return
+      }
+      syncingFromPnlRef.current = true
+      mainChart.timeScale().setVisibleLogicalRange(range)
+    }
 
-    const unsubMain = mainChart
-      .timeScale()
-      .subscribeVisibleLogicalRangeChange((range) => {
-        if (!range) return
-        if (syncingFromPnlRef.current) {
-          syncingFromPnlRef.current = false
-          return
-        }
-        syncingFromMainRef.current = true
-        pnlChart.timeScale().setVisibleLogicalRange(range)
-      })
-
-    const unsubPnl = pnlChart
-      .timeScale()
-      .subscribeVisibleLogicalRangeChange((range) => {
-        if (!range) return
-        if (syncingFromMainRef.current) {
-          syncingFromMainRef.current = false
-          return
-        }
-        syncingFromPnlRef.current = true
-        mainChart.timeScale().setVisibleLogicalRange(range)
-      })
+    mainChart.timeScale().subscribeVisibleLogicalRangeChange(onMainRangeChange)
+    pnlChart.timeScale().subscribeVisibleLogicalRangeChange(onPnlRangeChange)
 
     return () => {
-      unsubMain()
-      unsubPnl()
+      mainChart.timeScale().unsubscribeVisibleLogicalRangeChange(onMainRangeChange)
+      pnlChart.timeScale().unsubscribeVisibleLogicalRangeChange(onPnlRangeChange)
     }
   }, [mainChart])
 

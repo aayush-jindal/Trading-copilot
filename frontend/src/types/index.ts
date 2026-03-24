@@ -235,3 +235,101 @@ export interface Notification {
   created_at: string
   is_read: boolean
 }
+
+// Player / Backtester types
+export interface ChartCandle {
+  time: string
+  open: number
+  high: number
+  low: number
+  close: number
+}
+
+export interface ChartMarkerEntry {
+  type: 'entry'
+  time: string
+  verdict: 'ENTRY' | 'WATCH' | 'NO_TRADE'
+  score: number
+  price?: number | null
+  rr_ratio?: number | null
+}
+
+export interface ChartMarkerExit {
+  type: 'exit'
+  time: string
+  outcome: 'WIN' | 'LOSS' | 'EXPIRED'
+  price?: number | null
+  return_pct: number
+  days_to_outcome?: number | null
+}
+
+export type ChartMarker = ChartMarkerEntry | ChartMarkerExit
+
+export interface MarkerTooltipData {
+  marker: ChartMarker
+  runId: string
+  runLabel: string
+  runColour: string
+}
+
+export interface PnLPoint {
+  time: string
+  value: number
+}
+
+export interface BacktestRun {
+  run_id: string
+  ticker: string
+  run_label: string
+  total_signals: number
+  entry_signal_count: number
+  win_rate_entry: number
+  win_rate_watch: number
+  expected_value: number
+  avg_mae: number
+  avg_mfe: number
+  avg_days_to_outcome: number
+  fixed_pnl: number
+  compound_pnl: number
+  compound_final_pot: number
+}
+
+export interface BacktestSignal {
+  run_id: string
+  signal_date: string
+  verdict: 'ENTRY' | 'WATCH' | 'NO_TRADE'
+  setup_score: number
+  rr_ratio: number | null
+  support_strength: string | null
+  outcome: 'WIN' | 'LOSS' | 'EXPIRED'
+  outcome_date: string | null
+  return_pct: number | null
+  mae: number | null
+  mfe: number | null
+  days_to_outcome: number | null
+  uptrend_confirmed: boolean
+  weekly_trend_aligned: boolean
+  near_support: boolean
+  reversal_found: boolean
+  trigger_ok: boolean
+  four_h_confirmed: boolean
+  entry_price: number | null
+  stop_loss: number | null
+  target: number | null
+  exit_price: number | null
+  trade_pnl_fixed?: number
+  running_pnl_fixed?: number
+  trade_pnl_compound?: number
+  running_pnl_compound?: number
+  running_pot?: number
+}
+
+export interface RunMarkersResponse {
+  run_id: string
+  markers: ChartMarker[]
+  pnl_series?: PnLPoint[]
+  pnl_series_fixed?: PnLPoint[]
+  pnl_series_compound?: PnLPoint[]
+  final_pnl?: number
+  total_trades?: number
+}
