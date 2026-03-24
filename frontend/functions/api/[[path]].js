@@ -5,7 +5,7 @@ export async function onRequest(context) {
 
   const path = params.path ? params.path.join('/') : ''
   const origin = new URL(request.url)
-  const targetUrl = `${BACKEND}/api/${path}${origin.search}`
+  const targetUrl = `${BACKEND}/${path}${origin.search}`
 
   const proxyRequest = new Request(targetUrl, {
     method: request.method,
