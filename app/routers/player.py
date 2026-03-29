@@ -4,12 +4,13 @@ import asyncio
 import json
 from uuid import uuid4
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.database import get_db
 from app.dependencies import get_current_user
+from app.services.auth import decode_token
 from app.services.market_data import get_or_refresh_data
 from app.services.backtester import (
     BacktestConfig,
@@ -20,6 +21,10 @@ from app.services.backtester import (
 )
 
 router = APIRouter(prefix="/player", tags=["player"])
+
+# Separate router for the SSE stream endpoint — registered WITHOUT the global
+# JWT dependency because EventSource cannot set Authorization headers.
+stream_router = APIRouter(prefix="/player", tags=["player"])
 
 # In-memory progress store for SSE only; DB is source of truth
 _runs: dict[str, dict] = {}
@@ -36,6 +41,7 @@ class BacktestConfigBody(BaseModel):
     run_label: str = ""
     date_from: str | None = None
     date_to: str | None = None
+    strategy_name: str = "S1_TrendPullback"
 
 
 class LabelBody(BaseModel):
@@ -83,6 +89,8 @@ def _signal_row(r: BacktestResult, run_id: str) -> tuple:
         s.four_h_trigger,
         float(s.four_h_rsi) if s.four_h_rsi is not None else None,
         s.four_h_upgrade,
+        s.strategy_name,
+        s.conditions_json,
     )
 
 
@@ -104,6 +112,7 @@ async def start_run(
             require_weekly_aligned=config.require_weekly_aligned,
             date_from=config.date_from,
             date_to=config.date_to,
+            strategy_name=config.strategy_name,
         )
     )
     conn = get_db()
@@ -113,8 +122,8 @@ async def start_run(
             (run_id, ticker, run_label, lookback_years,
              entry_score_threshold, watch_score_threshold,
              min_rr_ratio, min_support_strength,
-             require_weekly_aligned, status)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'running')
+             require_weekly_aligned, strategy_name, status)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'running')
         """,
         (
             run_id,
@@ -126,6 +135,7 @@ async def start_run(
             config.min_rr_ratio,
             config.min_support_strength,
             config.require_weekly_aligned,
+            config.strategy_name,
         ),
     )
     conn.commit()
@@ -145,16 +155,29 @@ async def start_run(
             require_weekly_aligned=config.require_weekly_aligned,
             date_from=config.date_from,
             date_to=config.date_to,
+            strategy_name=config.strategy_name,
         ),
     )
     return {"run_id": run_id, "label": label}
 
 
-@router.get("/stream/{run_id}")
+@stream_router.get("/stream/{run_id}")
 async def stream_progress(
     run_id: str,
-    user: dict = Depends(get_current_user),
+    token: str | None = Query(default=None),
+    authorization: str | None = Header(default=None),
 ) -> StreamingResponse:
+    # SSE via EventSource cannot send Authorization headers — accept token as query param.
+    # Fall back to Authorization header for non-browser clients.
+    raw_token = token
+    if not raw_token and authorization and authorization.lower().startswith("bearer "):
+        raw_token = authorization.split(" ", 1)[1]
+    if not raw_token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    try:
+        decode_token(raw_token)
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid token")
     async def event_generator():
         while True:
             run = _runs.get(run_id)
@@ -499,9 +522,9 @@ async def _execute_run(run_id: str, config: BacktestConfig) -> None:
                      entry_price, stop_loss, target,
                      outcome, outcome_date, days_to_outcome, exit_price, return_pct, mae, mfe,
                      four_h_available, four_h_confirmed, four_h_reversal, four_h_trigger,
-                     four_h_rsi, four_h_upgrade)
+                     four_h_rsi, four_h_upgrade, strategy_name, conditions)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 row,
             )

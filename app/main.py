@@ -16,6 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.database import init_db
 from app.dependencies import get_current_user
 from app.routers import analysis, auth, data, internal, notifications, options, player, strategies, synthesis, trades, watchlist
+from app.routers.player import stream_router as player_stream_router
 
 
 @asynccontextmanager
@@ -41,6 +42,8 @@ app.add_middleware(
 # ── Public routes ─────────────────────────────────────────────────────────────
 app.include_router(auth.router)
 app.include_router(internal.router)
+# SSE stream — token validated inside the handler via query param (EventSource cannot set headers)
+app.include_router(player_stream_router)
 
 # ── Protected routes (require JWT) ────────────────────────────────────────────
 _auth = {"dependencies": [Depends(get_current_user)]}

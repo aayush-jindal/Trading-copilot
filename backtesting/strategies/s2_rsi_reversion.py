@@ -77,6 +77,7 @@ class RSIMeanReversionStrategy(BaseStrategy):
         rsi = momentum.get("rsi", 0.0) or 0.0
         prev_rsi = self._prev_rsi.get("", rsi)
         bb_pos = volatility.get("bb_position", 100.0) or 100.0
+        rr_label = ((snapshot.swing_setup or {}).get("conditions") or {}).get("rr_label")
 
         return [
             Condition(
@@ -97,6 +98,12 @@ class RSIMeanReversionStrategy(BaseStrategy):
                 value=f"pos {bb_pos:.0f}%",
                 required="< 20%"
             ),
+            Condition(
+                label="R:R quality",
+                passed=rr_label not in ("poor", "bad"),
+                value=rr_label or "unavailable",
+                required="marginal or better",
+            ),
         ]
 
     def _compute_risk(self, snapshot) -> object | None:
@@ -104,6 +111,9 @@ class RSIMeanReversionStrategy(BaseStrategy):
         volatility = snapshot.volatility or {}
         atr = volatility.get("atr")
         if not atr:
+            return None
+        rr_label = ((snapshot.swing_setup or {}).get("conditions") or {}).get("rr_label")
+        if rr_label == "poor":
             return None
         stop = price - 1.5 * atr
         if not self._stop_is_valid(price, stop, atr):

@@ -1,0 +1,6 @@
+The most important non-code finding
+Ticker quality matters more than any strategy parameter. Removing 7 bad tickers (MSTR, TSLA, COIN, INTC, ORCL, LLY, ADBE) flipped WATCH without trigger from -0.18% to +0.14% and RR labels from all-negative to all-positive. No strategy change achieves that. The watchlist guideline is:
+
+S1 compatible: steady trending large caps with identifiable S/R — SPY, QQQ, AAPL, MSFT, JPM, COST, WMT, MCD, TXN, NOW, MU, PYPL, AVGO, PANW
+S1 incompatible: high-volatility, crypto-adjacent, or structurally declining — MSTR, TSLA, COIN, INTC, ORCL
+

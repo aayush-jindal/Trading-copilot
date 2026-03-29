@@ -77,6 +77,7 @@ class StochasticCrossStrategy(BaseStrategy):
         stoch_d = momentum.get("stochastic_d") or 0.0
         rsi = momentum.get("rsi") or 0.0
         prev_k = self._prev_k.get("", stoch_k)
+        rr_label = ((snapshot.swing_setup or {}).get("conditions") or {}).get("rr_label")
 
         return [
             Condition(
@@ -97,6 +98,12 @@ class StochasticCrossStrategy(BaseStrategy):
                 value=f"RSI {rsi:.1f}",
                 required="< 65"
             ),
+            Condition(
+                label="R:R quality",
+                passed=rr_label not in ("poor", "bad"),
+                value=rr_label or "unavailable",
+                required="marginal or better",
+            ),
         ]
 
     def _compute_risk(self, snapshot) -> object | None:
@@ -106,8 +113,15 @@ class StochasticCrossStrategy(BaseStrategy):
         atr = vol.get("atr")
         if not atr:
             return None
-        stop = sr.get("nearest_support") or (price - atr)
-        if not self._stop_is_valid(price, stop, atr):
+        rr_label = ((snapshot.swing_setup or {}).get("conditions") or {}).get("rr_label")
+        if rr_label == "poor":
+            return None
+        nearest_support = sr.get("nearest_support")
+        if nearest_support:
+            stop = nearest_support
+            if not self._stop_is_valid(price, stop, atr):
+                return None  # support too close to entry — no valid stop
+        else:
             stop = price - 1.5 * atr
             if not self._stop_is_valid(price, stop, atr):
                 return None

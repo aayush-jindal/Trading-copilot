@@ -16,6 +16,24 @@ from app.dependencies import get_current_user
 from app.main import app
 
 
+@pytest.fixture(autouse=True)
+def clear_knowledge_cache():
+    """Truncate knowledge_strategy_cache before each test.
+
+    Prevents cache hits from one test bleeding into another
+    (e.g. test_200_response_shape caching AAPL, breaking test_500_on_exception).
+    """
+    from app.database import get_db
+    conn = get_db()
+    try:
+        conn.execute("DELETE FROM knowledge_strategy_cache")
+        conn.commit()
+    except Exception:
+        pass
+    finally:
+        conn.close()
+
+
 @pytest.fixture
 def authed_client():
     """TestClient with get_current_user dependency overridden (no real JWT needed)."""

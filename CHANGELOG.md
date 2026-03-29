@@ -2,6 +2,137 @@
 
 ---
 
+## 2026-03-29 — Fix: pre-existing test failures resolved
+
+### Files modified
+- `backtesting/strategies/s8_stochastic_cross.py` — Fixed `_compute_risk()`: when `nearest_support` is present but invalid, return `None` directly instead of falling back to ATR stop. Fixes `test_s8_returns_none_when_stop_invalid`.
+- `tests/conftest.py` — Added `clear_knowledge_cache` autouse fixture to truncate `knowledge_strategy_cache` before each test. Fixes `test_500_on_exception` / `test_500_detail_contains_error_message` cache pollution.
+- **1 unfixable:** `test_watch_upgrades_when_4h_confirmed` — mock omits `rr_ratio` in conditions; `ta_engine.py` and test both frozen per CLAUDE.md.
+
+### Test results: 421/422 pass (was 419/422)
+
+---
+
+## 2026-03-29 — Phase 7.4: 1A implemented — poor R:R excluded from S1, S2, S8
+
+### Files modified
+- `backtesting/strategies/s1_trend_pullback.py` — Added `rr_label='poor'` gate in `_compute_risk()` (returns None); added R:R quality Condition to `_check_conditions()`
+- `backtesting/strategies/s2_rsi_reversion.py` — Same pattern: poor R:R gate + R:R quality condition
+- `backtesting/strategies/s8_stochastic_cross.py` — Same pattern: poor R:R gate + R:R quality condition
+
+### Factory backtest result (quality tickers, 27,000 signals)
+| | Before | After (excl. poor) |
+|---|---|---|
+| n | 27,000 | 17,930 (-34% signals) |
+| WR | 64.9% | 59.9% (-5pp, expected) |
+| Avg return (EV) | 0.1139 | **0.1772 (+55.6%)** |
+
+Poor R:R signals had WR=74.8% but avg_return=-0.011 (negative EV). Removing them raises EV 55% while WR drops because high-WR-but-negative-EV trades are excluded.
+
+---
+
+## 2026-03-29 — Phase 7.2: strategy selector added to PlayerPage
+
+### Files modified
+- `frontend/src/pages/PlayerPage.tsx`
+  - Added `STRATEGIES` constant (6 strategies: S1–S3, S7–S9)
+  - Added `strategyName` state, defaulting to `S1_TrendPullback`
+  - Strategy dropdown added to config panel (between Min Support and Weekly aligned)
+  - `strategy_name` included in POST `/player/run` body
+  - Auto-label effect updated to embed strategy name in run label
+  - Strategy badge shown on run toggle buttons and runs comparison table when strategy ≠ S1
+  - Signals table CONDITIONS column: renders JSONB `conditions` array for non-S1 strategies; falls back to legacy S1 boolean columns for S1
+  - Removed unused `hasChart` variable
+
+- `frontend/src/types/index.ts`
+  - Added all missing player types: `ChartCandle`, `PnLPoint`, `ChartMarkerEntry`, `ChartMarkerExit`, `ChartMarker`, `RunMarkersResponse`, `MarkerTooltipData`, `BacktestRun`, `BacktestSignalCondition`, `BacktestSignal` (with P&L enrichment fields)
+
+---
+
+## 2026-03-29 — Phase 7.1: backplayer extended to support all registry strategies
+
+### Files modified
+- `app/database.py`
+  - Added `strategy_name VARCHAR(50) DEFAULT 'S1_TrendPullback'` to `backtest_runs` and `backtest_signals` (idempotent ALTER TABLE)
+  - Added `conditions JSONB` to `backtest_signals` for non-S1 strategy condition storage
+
+- `app/services/backtester.py`
+  - Added `strategy_name: str = 'S1_TrendPullback'` to `BacktestConfig` dataclass
+  - Added `strategy_name` and `conditions_json` fields to `BacktestSignal` dataclass
+  - Added `_make_snapshot()` helper to convert `analyze_ticker` result dict → `SignalSnapshot`
+  - Rewrote `_build_signal()`: S1 reads verdict/score/S1-specific columns from swing_setup dict (full backward compat); non-S1 reads from `StrategyResult`; all strategies serialize conditions to JSONB
+  - Updated `run_backtest()` loop: resolves strategy from `STRATEGY_REGISTRY` once before loop; S1 keeps `swing_setup.verdict in (ENTRY, WATCH)` gate; non-S1 uses `strategy.should_enter()` + `strategy.evaluate()`
+  - Updated auto-label to include strategy name
+
+- `app/routers/player.py`
+  - Added `strategy_name: str = 'S1_TrendPullback'` to `BacktestConfigBody`
+  - `strategy_name` passed through to `BacktestConfig` and stored in `backtest_runs` INSERT
+  - `strategy_name` and `conditions` columns added to `backtest_signals` INSERT (now 33 values)
+  - Added `stream_router` (separate `APIRouter`) for SSE `/stream/{run_id}` endpoint — registered without global JWT dependency (EventSource cannot set Authorization headers); token accepted as query param with fallback to Authorization header
+
+- `app/main.py`
+  - Registered `player_stream_router` in public routes section (no JWT dependency)
+
+- `CLAUDE.md`
+  - Active phase updated to `phase7.md`
+  - Frozen files table expanded with freeze scope column
+  - Signal layers reference section added
+  - Rule numbering updated (rule 6 added: never modify existing functions in `market_data.py`)
+
+- `.claude/ARCHITECTURE_DECISIONS.md`
+  - Added ADR-019: Backplayer merge frozen file exceptions
+  - Added ADR-020: Three new signal layers (4H, rr_label, provisional S/R) deferred pending backtest evidence
+  - Removed ADR-014 (backtest universe/tuning protocol) — superseded by Phase 7 hypothesis layer
+
+---
+
+## 2026-03-29 — Phase 7.3: hypothesis agent results and findings documented
+
+### Files created
+- `.claude/hypothesis_findings.md` — Full cross-experiment analysis of 10,906 signals across 30 tickers (107 runs). Documents rr_label breakdown (good/marginal/poor), weekly alignment effect (+1.3pp WR, no avg_return benefit), trigger_ok effect (WATCH+trigger=82.3% WR vs 62.7%), ENTRY avg_rr=3.60 with negative avg_return, 4H confirmation analysis. Justifies Tasks 7.4, 7.5, 7.6.
+
+---
+
+## 2026-03-20 — Fix: player SSE stream still 401 due to router-level auth
+
+### Files modified
+- `app/routers/player.py` — Added `stream_router` (separate `APIRouter`). Moved `/stream/{run_id}` from `router` to `stream_router` so it bypasses the global `**_auth` dependency applied at router inclusion time.
+- `app/main.py` — Imported `stream_router` from player and registered it in the public routes section (no JWT dependency). All other player routes remain protected.
+
+---
+
+## 2026-03-20 — Fix: PlayerPage missing key prop + Vite cache clear
+
+### Files modified
+- `frontend/src/pages/PlayerPage.tsx` — `key` prop was on inner `<tr>` but outermost element was a `<>` fragment. React requires `key` on the outermost element. Changed to `<Fragment key={sigKey}>` and added `Fragment` to the React import.
+
+### Other
+- Cleared Vite dev cache (`node_modules/.vite`) to force React Router future flags to take effect.
+
+---
+
+## 2026-03-20 — Fix: PlayerPnLPanel crash — unsubMain is not a function
+
+### File modified
+- `frontend/src/components/PlayerPnLPanel.tsx` — In lightweight-charts v4, `subscribeVisibleLogicalRangeChange` returns `void` (not an unsubscribe function). Fixed by storing handler references (`onMainChange`, `onPnlChange`) and calling `unsubscribeVisibleLogicalRangeChange(handler)` in the cleanup. Also imported `LogicalRange` type to correctly type the callbacks.
+
+---
+
+## 2026-03-20 — Fix: player SSE stream 401 + React Router warnings
+
+### Files modified
+- `app/routers/player.py` — `/player/stream/{run_id}` now accepts `?token=` query param. `EventSource` (used for SSE) cannot set `Authorization` headers in browsers; token must come via query string. Falls back to `Authorization: Bearer` header for non-browser clients. Removed `Depends(get_current_user)`, validates token manually via `decode_token()`.
+- `frontend/src/App.tsx` — Added `future={{ v7_startTransition: true, v7_relativeSplatPath: true }}` to `BrowserRouter` to silence React Router v6→v7 upgrade warnings.
+
+---
+
+## 2026-03-20 — Docs: remove duplicate ADRs from ARCHITECTURE_DECISIONS.md
+
+### File modified
+- `.claude/ARCHITECTURE_DECISIONS.md` — Removed three duplicate blocks: second copy of ADR-014 (mislabelled ADR-017), third copy of ADR-014 (mislabelled again), and duplicate ADR-015 (mislabelled ADR-018). Also removed stray double `---` separator. File reduced from 1247 to 898 lines. ADR sequence is now clean: 001–016, 019–020.
+
+---
+
 ## 2026-03-20 — UX: add Backtester nav link to header
 
 ### File modified
@@ -1081,3 +1212,10 @@ Added `options` to the router imports and registered `options.router` under JWT 
 Added `numpy` (was a transitive dep; now explicitly declared) and `matplotlib` (required by `pricing/src/analytics/vol_surface.py` for `plot_vol_surface`; imported at module load with `matplotlib.use('Agg')` so it is safe in a server context).
 
 ---
+
+- [2026-03-19] Created: docs/player.md — Full user guide for the Backtesting Player feature (controls, result metrics, interpreting stats, comparing runs, limitations)
+- [2026-03-29] Modified: app/database.py — Phase 7.1: added strategy_name to backtest_runs and backtest_signals, added conditions JSONB column to backtest_signals
+- [2026-03-29] Modified: app/services/backtester.py — Phase 7.1: added strategy_name to BacktestConfig/BacktestSignal; added _make_snapshot() helper; updated _build_signal() and run_backtest() loop to use strategy factory interface for all registered strategies; S1 backward compat path preserved
+- [2026-03-29] Modified: app/routers/player.py — Phase 7.1: added strategy_name to BacktestConfigBody, BacktestConfig construction, backtest_runs INSERT, and backtest_signals INSERT; added conditions column to signal INSERT
+- [2026-03-29] Modified: frontend/src/types/index.ts — Added all missing player types: BacktestRun, BacktestSignal, BacktestSignalCondition, ChartCandle, PnLPoint, ChartMarker, ChartMarkerEntry, ChartMarkerExit, RunMarkersResponse, MarkerTooltipData
+- [2026-03-29] Modified: frontend/src/pages/PlayerPage.tsx — Phase 7.2: added STRATEGIES constant and strategy dropdown to config panel; added strategy_name to POST body; added strategy badge to run toggles and runs table; updated expanded signal CONDITIONS to render JSONB conditions array for non-S1 strategies (falls back to boolean columns for S1); removed unused hasChart variable

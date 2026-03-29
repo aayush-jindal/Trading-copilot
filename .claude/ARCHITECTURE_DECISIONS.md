@@ -611,151 +611,6 @@ history without excluding useful names.
 
 ---
 
----
-
-## ADR-014 — Backtest universe, train/test split, and tuning protocol
-
-**Date:** March 2026  
-**Status:** Active
-
-### Decision
-The backtest uses a 40-ticker expanded universe across 7 categories,
-an 80/20 train/test split (2005–2021 train, 2021–2026 test), per-ticker
-start dates using `max(2005-01-01, ticker_ipo)`, a two-stage gate, and
-a structured 3-iteration tuning protocol for strategies that fail.
-
-### Why 40 tickers across 7 categories
-
-The original 18-ticker universe had three critical gaps that caused
-specific strategy failures:
-
-**Gap 1 — no volatile individual equities (caused S2 failure)**
-Large-cap ETFs and mega-caps rarely hit RSI 30 on daily bars. S2 got
-19 trades in 5 years — not enough to measure anything. Adding CRM, NFLX,
-META, SQ, SLV, USO gives the strategy stocks that actually become oversold
-on a regular basis.
-
-**Gap 2 — no 2008-2009 recovery data (caused S10 ambiguity)**
-S10 (Golden Cross Pullback) is specifically designed to catch the first
-pullback after a major bear market bottom. The 2019-2024 window had no
-meaningful bear-recovery cycle. Adding V, MA, UNH, HD and extending to
-2005 gives S10 the 2009 recovery data it was designed for.
-
-**Gap 3 — missing sectors (limited generalizability)**
-No consumer discretionary, industrials, materials, staples, REITs, or
-international exposure. Adding XLY, XLI, XLB, XLP, VNQ, EEM, EFA ensures
-strategies are tested across different economic cycle sensitivities, not
-just tech and financials.
-
-**The 40-ticker cap**
-Beyond 40 tickers, adding more names produces diminishing statistical
-returns while increasing runtime significantly. Diversity across sectors
-and volatility profiles matters more than raw count.
-
-### Why 80/20 train/test (2005–2021 / 2021–2026)
-
-**Train covers 4 distinct market regimes:**
-- 2005-2007: pre-GFC bull market
-- 2008-2009: Global Financial Crisis — most important bear market stress test
-- 2009-2019: decade-long bull market
-- 2020: COVID crash and rapid recovery
-
-**Test covers 2 distinct regimes:**
-- 2021-2022: post-COVID bull then Fed rate hike bear (different from 2008)
-- 2023-2026: AI-driven recovery and bull market continuation
-
-The test window deliberately includes a rate-driven bear market (2022)
-which is mechanically different from the credit-driven 2008 crash. A
-strategy that passes both is robust across different bear market types.
-
-### Per-ticker start dates
-
-Dropping TSLA because it starts in 2010 would lose a high-volatility
-name that is valuable for S2 and S3. The `max(2005, ipo)` rule keeps
-every ticker while being honest about available history. Tickers with
-shorter history simply contribute fewer bars — they are not penalized,
-they just have less influence on the aggregate statistics.
-
-### Two-stage gate
-
-Single-window backtesting has a well-documented problem: strategies that
-look good on the full window are often optimized to it accidentally, even
-when no explicit parameter search was done. The train/test split catches
-this. A strategy that passes train (30+ trades, E > 0) but fails test
-(20+ trades, E > 0) is either:
-- Regime-sensitive: only works in certain market conditions → "pending"
-- Curve-fitted: parameters tuned to 2005-2021 specifics → retire
-
-Test gate is lower (20 trades vs 30) because the test window is shorter.
-
-### Tuning protocol — 3-level classification, 3-iteration maximum
-
-Before any parameter is changed, classify the failure:
-
-**Level 1 — wrong universe (too few trades)**
-Signal logic is fine but market conditions for the signal are rare in
-the current universe. Fix: add more appropriate tickers. Do not change
-strategy logic until you have sufficient trades to measure.
-
-**Level 2 — parameter problem (right signal, wrong threshold)**
-Signal fires at broadly the right times but the specific entry/exit
-threshold is slightly off. Characterized by: reasonable trade count,
-win rate near 50%, expectancy near zero. Fix: one parameter at a time,
-max 3 iterations, full train re-run each time.
-
-**Level 3 — structural failure (wrong signal entirely)**
-Signal fires consistently and consistently loses. Characterized by:
-high trade count, win rate well below 50%, large negative expectancy.
-S8 StochasticCross (-2.35R on 519 trades) is the canonical example.
-No amount of parameter tuning fixes a signal that fires on noise.
-Retire immediately.
-
-### Per-strategy tuning plans (Level 2 only)
-
-**S2 RSI Mean Reversion** (if still fails after universe expansion):
-1. Tighten stop from 1.5×ATR to 1.0×ATR
-2. Add volume_ratio > 1.2× on entry bar
-3. Require RSI < 35 two bars before the cross above 30
-
-**S3 BB Squeeze** (if expectancy stays near zero):
-1. Replace bb_upper close exit with ATR trailing stop
-2. Tighten volume entry from 1.5× to 2.0×
-
-**S10 Golden Cross Pullback** (if train passes, test fails):
-1. Tighten "within 10 bars" to "within 5 bars"
-2. Add weekly SMA10 > SMA40 confirmation at entry
-
-### Hard tuning rules
-
-1. Never tune on the test set — all parameter decisions made on TRAIN only
-2. One parameter change per iteration — never change entry AND exit simultaneously
-3. Maximum 3 iterations per strategy — after 3, retire or accept as-is
-4. Each iteration requires full TRAIN re-run — no spot-checking
-5. A strategy passes only when BOTH train AND test pass their respective gates
-6. Train passes, test fails = curve fitted = retire (move to "retired") or
-   pending (move to "pending" with a note about which regime it fails in)
-7. All tuning attempts recorded in validated_strategies.json tuning_log
-   regardless of outcome — the log is the audit trail
-
-### Rejected alternatives
-
-**Single window, no split** — rejected. Any strategy optimized even
-slightly on the data it is tested on will show inflated results. The
-2019-2024 window was this problem in practice: we got strong results
-on 5 years that included one of the strongest bull markets in history.
-
-**Rolling window cross-validation** — considered. Would give more
-statistically robust results but requires 5-10× more compute and
-significantly more complex implementation. The simple 80/20 split
-catches the most important failure modes (regime sensitivity, curve
-fitting) at a fraction of the complexity.
-
-**Dropping short-history tickers** — rejected in favor of per-ticker
-start dates. Dropping TSLA, V, META, SHOP loses valuable testing data
-for specific strategies. The `max(2005, ipo)` rule is honest about
-history without excluding useful names.
-
----
 
 ## ADR-015 — should_enter() and _check_conditions() must stay in sync
 
@@ -852,6 +707,160 @@ On the frontend, the book analysis section is not fetched automatically on ticke
 
 ---
 
+## ADR-019 — Backplayer merge: frozen file exceptions and new signal layers
+
+**Date:** March 2026  
+**Status:** Active
+
+### Decision
+The backplayer feature (commit 1b7de72) modified two files that were
+previously frozen: `app/services/ta_engine.py` and `app/services/market_data.py`.
+These changes are accepted. The frozen status of both files is updated to
+reflect the new additions.
+
+### What changed in frozen files
+
+**`app/services/ta_engine.py`**
+- `analyze_ticker()` gains an optional `hourly_df` parameter (default None)
+- When `hourly_df` is provided, computes `FourHConfirmation` and appends
+  `four_h_confirmation` and `four_h_upgrade` to `AnalysisResponse`
+- All existing signal logic (swing_setup weights, candlestick patterns,
+  trend/momentum/volume/S/R computations) is unchanged
+- The addition is additive and gated — passing `hourly_df=None` produces
+  identical output to the pre-merge version
+
+**`app/services/market_data.py`**
+- Added `fetch_hourly_data()`, `_upsert_hourly()`, `_is_hourly_stale()`,
+  `get_or_refresh_hourly_data()` — all new functions
+- No existing functions modified
+- Hourly data stored in new `hourly_price_history` table
+
+### Why accepted despite freeze
+
+The spirit of the freeze was to protect signal scoring weights and
+calibrated logic from accidental modification. The backplayer changes
+are purely additive — they add a new signal layer (4H confirmation)
+without touching any existing weights, conditions, or scoring logic.
+The freeze protected against drift; this is a deliberate extension.
+
+### Updated freeze scope
+
+Both files remain frozen with this clarification:
+- `ta_engine.py`: all existing signal functions frozen. The `hourly_df`
+  parameter and `FourHConfirmation` computation are frozen as new
+  additions. Do not modify swing_setup weights, candlestick patterns,
+  or any existing compute_* function.
+- `market_data.py`: all existing functions frozen. The hourly functions
+  are frozen as new additions. Do not modify `get_or_refresh_data()`,
+  `fetch_ticker_data()`, or any existing data pipeline function.
+
+### New tables added by backplayer
+
+- `backtest_runs` — one row per player backtest run with parameters and
+  aggregate stats (win rate, expected value, P&L in fixed and compound modes)
+- `backtest_signals` — one row per signal fired during a run with full
+  signal context at entry and outcome evaluation (WIN/LOSS/EXPIRED)
+- `hourly_price_history` — 1H OHLCV bars, refreshed every 2 hours
+
+---
+
+## ADR-020 — Three new signal layers available for strategy factory integration
+
+**Date:** March 2026  
+**Status:** Pending integration — query backtest_signals before implementing
+
+### Decision
+Three new signals introduced by the backplayer merge are available in
+the `SignalSnapshot` but not yet used by any strategy in the factory.
+Integration is deferred until empirical evidence from `backtest_signals`
+data confirms their impact on outcomes.
+
+### The three new signals
+
+**1. Four-hour confirmation (`four_h_upgrade`, `four_h_confirmation`)**
+
+Computed by `ta_engine.py` when `hourly_df` is provided. Fires True when:
+- A bullish reversal candle exists on the 4H chart
+- A 4H trigger bar (close > prior 4H high) has fired
+- 4H RSI is in an acceptable range
+
+`four_h_upgrade = True` means daily signal AND 4H signal are aligned.
+This addresses the failure mode where a daily ENTRY fires but price
+continues lower because the 4H timeframe had not yet confirmed the reversal.
+
+**2. R:R gate in SwingConditions (`rr_label`, `rr_gate_pass`)**
+
+Added to `SwingConditions` model. Labels the R:R ratio as
+good/marginal/poor/bad/unavailable. Currently computed by `backtester.py`
+but the field exists in `swing_setup.conditions` in the snapshot.
+A setup with `rr_label = "bad"` (R:R < 0.5) currently scores identically
+to one with `rr_label = "good"` (R:R > 2.0). This is wrong — poor R:R
+should reduce score or suppress ENTRY.
+
+**3. Provisional S/R flag (`support_is_provisional`)**
+
+`argrelextrema(order=5)` requires 5 confirmed bars on each side of a
+swing low. Very recent lows are flagged `support_is_provisional = True`.
+A stop placed at a provisional support is less reliable than one at a
+confirmed level. `_stop_is_valid()` currently treats both equally.
+
+### Why deferred — evidence first
+
+The `backtest_signals` table contains `four_h_upgrade`, `rr_label`, and
+`support_is_provisional` columns alongside outcome data (WIN/LOSS/EXPIRED,
+return_pct, MAE, MFE). Before adding any of these as score modifiers, query
+the actual outcome data to confirm each signal's empirical impact:
+
+```sql
+-- Does four_h_upgrade correlate with better outcomes?
+SELECT four_h_upgrade,
+       COUNT(*) as trades,
+       AVG(CASE WHEN outcome='WIN' THEN 1.0 ELSE 0.0 END) as win_rate,
+       AVG(return_pct) as avg_return
+FROM backtest_signals
+WHERE outcome IS NOT NULL
+GROUP BY four_h_upgrade;
+
+-- Does rr_label predict outcomes?
+SELECT rr_label,
+       COUNT(*) as trades,
+       AVG(CASE WHEN outcome='WIN' THEN 1.0 ELSE 0.0 END) as win_rate,
+       AVG(return_pct) as avg_return
+FROM backtest_signals
+WHERE outcome IS NOT NULL
+GROUP BY rr_label
+ORDER BY avg_return DESC;
+
+-- Does provisional support affect stop reliability?
+SELECT support_is_provisional,
+       AVG(mae) as avg_mae,
+       AVG(CASE WHEN outcome='WIN' THEN 1.0 ELSE 0.0 END) as win_rate
+FROM backtest_signals
+WHERE outcome IS NOT NULL
+GROUP BY support_is_provisional;
+```
+
+Integration decisions will be made based on query results, not assumption.
+
+### Proposed integration homes (pending evidence)
+
+| Signal | Proposed home | Proposed effect |
+|--------|--------------|-----------------|
+| `four_h_upgrade` | `_check_conditions()` optional condition | Score bonus when True, no penalty when False or unavailable |
+| `four_h_available` | `_check_conditions()` display only | Show when 4H data was not available so user knows upgrade check didn't run |
+| `rr_label` | `_compute_risk()` | bad R:R returns None (no trade). poor reduces score. good/marginal pass through. |
+| `rr_gate_pass` | `_verdict()` | False suppresses ENTRY regardless of other conditions |
+| `support_is_provisional` | `_stop_is_valid()` | Provisional support requires wider threshold (0.75×ATR instead of 0.5×ATR) |
+
+### What does NOT change
+
+- Existing strategy backtest results remain valid — none of these filters
+  were applied during the train/test runs in validated_strategies.json
+- If any filter is added, the affected strategies must be re-backtested
+  to measure the impact on expectancy and trade count
+- The validated_strategies.json gate (E > 0, trades >= 30/20) applies
+  to the re-run just as it did to the original
+---
 ## Open questions — not yet decided
 
 These are decisions that will need to be made as the system evolves.

@@ -108,3 +108,7 @@ backtest_results/
 
 # Backtesting data cache (large binary, keep locally)
 backtesting/ohlcv.db
+*.sql
+app/services/options
+*.docx
+resources

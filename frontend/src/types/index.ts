@@ -352,3 +352,141 @@ export interface UserSettings {
   account_size: number
   risk_pct: number
 }
+
+// ── Backtesting player ─────────────────────────────────────────────────────────
+
+export interface ChartCandle {
+  time: string
+  open: number
+  high: number
+  low: number
+  close: number
+}
+
+export interface PnLPoint {
+  time: string
+  value: number
+}
+
+export interface ChartMarkerEntry {
+  time: string
+  type: 'entry'
+  verdict: string
+  score: number
+  price: number | null
+  rr_ratio: number | null
+}
+
+export interface ChartMarkerExit {
+  time: string
+  type: 'exit'
+  outcome: string
+  price: number | null
+  return_pct: number
+  days_to_outcome: number | null
+}
+
+export type ChartMarker = ChartMarkerEntry | ChartMarkerExit
+
+export interface RunMarkersResponse {
+  run_id: string
+  markers: ChartMarker[]
+  pnl_series: PnLPoint[]
+  pnl_series_fixed: PnLPoint[]
+  pnl_series_compound: PnLPoint[]
+  final_pnl: number
+  total_trades: number
+}
+
+export interface MarkerTooltipData {
+  marker: ChartMarker
+  runId: string
+  runLabel: string
+  runColour: string
+}
+
+export interface BacktestRun {
+  run_id: string
+  ticker: string
+  run_label: string
+  strategy_name: string | null
+  lookback_years: number
+  entry_score_threshold: number
+  watch_score_threshold: number
+  min_rr_ratio: number
+  min_support_strength: string
+  require_weekly_aligned: boolean
+  status: string
+  total_signals: number | null
+  entry_signals: number | null
+  watch_signals: number | null
+  win_count: number | null
+  loss_count: number | null
+  expired_count: number | null
+  win_rate: number | null
+  win_rate_entry: number | null
+  win_rate_watch: number | null
+  win_rate_all: number | null
+  expected_value: number | null
+  avg_return_pct: number | null
+  avg_mae: number | null
+  avg_mfe: number | null
+  avg_days_to_outcome: number | null
+  expired_pct: number | null
+  entry_signal_count: number | null
+  fixed_pnl: number | null
+  compound_pnl: number | null
+  compound_final_pot: number | null
+  created_at: string | null
+  completed_at: string | null
+}
+
+export interface BacktestSignalCondition {
+  label: string
+  passed: boolean
+  value: string
+  required: string
+}
+
+export interface BacktestSignal {
+  id: number
+  run_id: string
+  ticker: string
+  signal_date: string
+  verdict: string
+  setup_score: number
+  score_decile: number
+  uptrend_confirmed: boolean
+  weekly_trend_aligned: boolean
+  near_support: boolean
+  support_strength: string | null
+  reversal_found: boolean
+  trigger_ok: boolean
+  rr_ratio: number | null
+  rr_label: string | null
+  support_is_provisional: boolean
+  entry_price: number
+  stop_loss: number | null
+  target: number | null
+  outcome: string | null
+  outcome_date: string | null
+  days_to_outcome: number | null
+  exit_price: number | null
+  return_pct: number | null
+  mae: number | null
+  mfe: number | null
+  four_h_available: boolean
+  four_h_confirmed: boolean
+  four_h_reversal: boolean
+  four_h_trigger: boolean
+  four_h_rsi: number | null
+  four_h_upgrade: boolean
+  strategy_name: string | null
+  conditions: BacktestSignalCondition[] | null
+  // P&L enrichment (signals/pnl endpoint only)
+  trade_pnl_fixed?: number
+  running_pnl_fixed?: number
+  trade_pnl_compound?: number
+  running_pot?: number
+  running_pnl_compound?: number
+}

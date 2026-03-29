@@ -4,6 +4,7 @@ import {
   useRef,
   useMemo,
   useCallback,
+  Fragment,
 } from 'react'
 import type { IChartApi } from 'lightweight-charts'
 import PlayerChart, { getRunColour } from '../components/PlayerChart'
@@ -64,6 +65,15 @@ async function apiDelete(url: string, token: string) {
 // ── Constants ────────────────────────────────────────────────────────────────
 
 const SUPPORT_OPTIONS = ['LOW', 'MEDIUM', 'HIGH'] as const
+
+const STRATEGIES = [
+  { value: 'S1_TrendPullback',    label: 'S1 Trend Pullback' },
+  { value: 'S2_RSIMeanReversion', label: 'S2 RSI Mean Reversion' },
+  { value: 'S3_BBSqueeze',        label: 'S3 BB Squeeze' },
+  { value: 'S7_MACDCross',        label: 'S7 MACD Cross' },
+  { value: 'S8_StochasticCross',  label: 'S8 Stochastic Cross' },
+  { value: 'S9_EMACross',         label: 'S9 EMA Cross' },
+]
 const PRESETS: Array<{ label: string; months: number }> = [
   { label: '6M', months: 6 },
   { label: '1Y', months: 12 },
@@ -185,6 +195,7 @@ export default function PlayerPage() {
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
   const [activePreset, setActivePreset] = useState<string | null>(null)
+  const [strategyName, setStrategyName] = useState('S1_TrendPullback')
   const dateRangeActive = dateFrom !== '' && dateTo !== '' && dateFrom < dateTo
 
   // Run state
@@ -241,8 +252,8 @@ export default function PlayerPage() {
     const supp = minSupport === 'LOW' ? 'S-LOW' : minSupport === 'MEDIUM' ? 'S-MED' : 'S-HIGH'
     const wa = weeklyAligned ? 'W-ON' : 'W-OFF'
     const range = dateRangeActive ? `${dateFrom}→${dateTo}` : `${lookbackYears}Y`
-    setRunLabel(`${t} · E${entryThreshold} · W${watchThreshold} · RR${minRR} · ${supp} · ${wa} · ${range}`)
-  }, [ticker, entryThreshold, watchThreshold, minRR, minSupport, weeklyAligned, lookbackYears, dateFrom, dateTo, dateRangeActive])
+    setRunLabel(`${t} · ${strategyName} · E${entryThreshold} · W${watchThreshold} · RR${minRR} · ${supp} · ${wa} · ${range}`)
+  }, [ticker, strategyName, entryThreshold, watchThreshold, minRR, minSupport, weeklyAligned, lookbackYears, dateFrom, dateTo, dateRangeActive])
 
   // ── Load runs on ticker change ─────────────────────────────────────────────
   const loadRuns = useCallback(async (t: string) => {
@@ -324,6 +335,7 @@ export default function PlayerPage() {
     try {
       const body: Record<string, unknown> = {
         ticker: t,
+        strategy_name: strategyName,
         lookback_years: lookbackYears,
         entry_score_threshold: entryThreshold,
         watch_score_threshold: watchThreshold,
@@ -549,7 +561,6 @@ export default function PlayerPage() {
 
   // ── Render ─────────────────────────────────────────────────────────────────
   const selectedRun = runs.find((r) => r.run_id === selectedRunId) ?? null
-  const hasChart = candles.length > 0 && (runMarkerSets.length > 0 || candles.length > 0)
 
   return (
     <div style={S.page}>
@@ -688,6 +699,21 @@ export default function PlayerPage() {
                     >
                       {r.run_label}
                     </span>
+                    {r.strategy_name && r.strategy_name !== 'S1_TrendPullback' && (
+                      <span
+                        style={{
+                          fontSize: 9,
+                          color: colour,
+                          background: `${colour}18`,
+                          border: `1px solid ${colour}40`,
+                          borderRadius: 3,
+                          padding: '0px 4px',
+                          flexShrink: 0,
+                        }}
+                      >
+                        {r.strategy_name.replace('_', ' ')}
+                      </span>
+                    )}
                   </button>
                 )
               })}
@@ -927,9 +953,8 @@ export default function PlayerPage() {
                           : '#1A1A1A'
 
                       return (
-                        <>
+                        <Fragment key={sigKey}>
                           <tr
-                            key={sigKey}
                             data-sig={sigKey}
                             onClick={() => {
                               handleSignalRowClick(sig)
@@ -1114,35 +1139,56 @@ export default function PlayerPage() {
                                     >
                                       CONDITIONS
                                     </div>
-                                    {[
-                                      ['Uptrend', sig.uptrend_confirmed],
-                                      ['Weekly aligned', sig.weekly_trend_aligned],
-                                      ['Near support', sig.near_support],
-                                      ['Reversal found', sig.reversal_found],
-                                      ['Trigger OK', sig.trigger_ok],
-                                      ['4H confirmed', sig.four_h_confirmed],
-                                    ].map(([label, val]) => (
-                                      <div
-                                        key={String(label)}
-                                        style={{
-                                          display: 'flex',
-                                          gap: 8,
-                                          marginBottom: 3,
-                                        }}
-                                      >
-                                        <span
-                                          style={{
-                                            color: val ? '#34D399' : '#F87171',
-                                            fontSize: 11,
-                                          }}
-                                        >
-                                          {val ? '✓' : '✗'}
-                                        </span>
-                                        <span style={{ color: '#9CA3AF', fontSize: 11 }}>
-                                          {label as string}
-                                        </span>
-                                      </div>
-                                    ))}
+                                    {/* Non-S1: render JSONB conditions array */}
+                                    {sig.conditions && sig.conditions.length > 0
+                                      ? sig.conditions.map((c) => (
+                                          <div
+                                            key={c.label}
+                                            style={{ display: 'flex', gap: 8, marginBottom: 3 }}
+                                          >
+                                            <span
+                                              style={{
+                                                color: c.passed ? '#34D399' : '#F87171',
+                                                fontSize: 11,
+                                                flexShrink: 0,
+                                              }}
+                                            >
+                                              {c.passed ? '✓' : '✗'}
+                                            </span>
+                                            <span style={{ color: '#9CA3AF', fontSize: 11 }}>
+                                              {c.label}
+                                            </span>
+                                            <span style={{ color: '#6B7280', fontSize: 10, marginLeft: 'auto' }}>
+                                              {c.value}
+                                            </span>
+                                          </div>
+                                        ))
+                                      /* S1 fallback: legacy boolean columns */
+                                      : [
+                                          ['Uptrend', sig.uptrend_confirmed],
+                                          ['Weekly aligned', sig.weekly_trend_aligned],
+                                          ['Near support', sig.near_support],
+                                          ['Reversal found', sig.reversal_found],
+                                          ['Trigger OK', sig.trigger_ok],
+                                          ['4H confirmed', sig.four_h_confirmed],
+                                        ].map(([label, val]) => (
+                                          <div
+                                            key={String(label)}
+                                            style={{ display: 'flex', gap: 8, marginBottom: 3 }}
+                                          >
+                                            <span
+                                              style={{
+                                                color: val ? '#34D399' : '#F87171',
+                                                fontSize: 11,
+                                              }}
+                                            >
+                                              {val ? '✓' : '✗'}
+                                            </span>
+                                            <span style={{ color: '#9CA3AF', fontSize: 11 }}>
+                                              {label as string}
+                                            </span>
+                                          </div>
+                                        ))}
                                   </div>
                                   {/* Levels */}
                                   <div>
@@ -1202,7 +1248,7 @@ export default function PlayerPage() {
                               </td>
                             </tr>
                           )}
-                        </>
+                        </Fragment>
                       )
                     })}
                   </tbody>
@@ -1303,6 +1349,22 @@ export default function PlayerPage() {
                   ))}
                 </select>
               </div>
+            </div>
+
+            {/* Strategy */}
+            <div style={{ marginBottom: 10 }}>
+              <label style={S.label}>Strategy</label>
+              <select
+                value={strategyName}
+                onChange={(e) => setStrategyName(e.target.value)}
+                style={S.input}
+              >
+                {STRATEGIES.map((s) => (
+                  <option key={s.value} value={s.value}>
+                    {s.label}
+                  </option>
+                ))}
+              </select>
             </div>
 
             {/* Weekly aligned toggle */}
@@ -1485,18 +1547,36 @@ export default function PlayerPage() {
                                 </button>
                               </div>
                             ) : (
-                              <span
-                                style={{
-                                  color: '#9CA3AF',
-                                  display: 'block',
-                                  overflow: 'hidden',
-                                  textOverflow: 'ellipsis',
-                                  whiteSpace: 'nowrap',
-                                }}
-                                title={run.run_label}
-                              >
-                                {run.run_label}
-                              </span>
+                              <>
+                                <span
+                                  style={{
+                                    color: '#9CA3AF',
+                                    display: 'block',
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                    whiteSpace: 'nowrap',
+                                  }}
+                                  title={run.run_label}
+                                >
+                                  {run.run_label}
+                                </span>
+                                {run.strategy_name && run.strategy_name !== 'S1_TrendPullback' && (
+                                  <span
+                                    style={{
+                                      fontSize: 9,
+                                      color: colour,
+                                      background: `${colour}18`,
+                                      border: `1px solid ${colour}40`,
+                                      borderRadius: 3,
+                                      padding: '0px 4px',
+                                      display: 'inline-block',
+                                      marginTop: 2,
+                                    }}
+                                  >
+                                    {run.strategy_name.replace('_', ' ')}
+                                  </span>
+                                )}
+                              </>
                             )}
                           </td>
 

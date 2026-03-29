@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass
 from statistics import mean
 from typing import Callable
@@ -16,6 +17,7 @@ from app.services.ta_engine import (
     _prepare_dataframe,
     analyze_ticker,
 )
+from backtesting.signals import SignalSnapshot
 
 LOOKAHEAD_CAP_DAYS = 30
 MIN_HISTORY_BARS = 200
@@ -33,6 +35,7 @@ class BacktestConfig:
     run_label: str = ""
     date_from: str | None = None
     date_to: str | None = None
+    strategy_name: str = "S1_TrendPullback"
 
 
 @dataclass
@@ -60,6 +63,8 @@ class BacktestSignal:
     four_h_trigger: bool = False
     four_h_rsi: float | None = None
     four_h_upgrade: bool = False
+    strategy_name: str = "S1_TrendPullback"
+    conditions_json: str | None = None
 
 
 @dataclass
@@ -128,48 +133,121 @@ def analyze_ticker_from_df(
     )
 
 
+def _make_snapshot(result: dict) -> SignalSnapshot:
+    """Build a SignalSnapshot from an analyze_ticker result dict."""
+    return SignalSnapshot(
+        price=float(result.get("price", 0)),
+        trend=result.get("trend") or {},
+        momentum=result.get("momentum") or {},
+        volatility=result.get("volatility") or {},
+        volume=result.get("volume") or {},
+        support_resistance=result.get("support_resistance") or {},
+        swing_setup=result.get("swing_setup"),
+        weekly=result.get("weekly_trend"),
+        candlestick=result.get("candlestick") or [],
+    )
+
+
 def _build_signal(
     ticker: str,
     run_id: UUID,
     full_df: pd.DataFrame,
     signal_bar_index: int,
-    result: dict,
+    ta_result: dict,
+    strat_result,           # StrategyResult from strategy.evaluate()
+    strategy_name: str,
 ) -> BacktestSignal:
-    swing = result.get("swing_setup") or {}
-    cond = swing.get("conditions") or {}
-    levels = swing.get("levels") or {}
-    risk = swing.get("risk") or {}
-    sr = result.get("support_resistance") or {}
+    sr = ta_result.get("support_resistance") or {}
+    four_h = ta_result.get("four_h_confirmation") or _NEUTRAL_4H
     signal_date = full_df.index[signal_bar_index]
-    score = int(swing.get("setup_score") or 0)
+
+    score = strat_result.score
     score_decile = 10 if score >= 100 else max(1, min(10, (score // 10) + 1))
 
-    four_h = result.get("four_h_confirmation") or _NEUTRAL_4H
+    risk = strat_result.risk
+    entry_price = float(risk.entry_price) if risk else float(ta_result.get("price", 0))
+    stop_loss = float(risk.stop_loss) if risk else None
+    target = float(risk.target) if risk else None
+    rr_ratio = float(risk.risk_reward) if risk else None
+
+    # S1-specific columns — populate from swing_setup for backward compatibility.
+    # Non-S1 strategies leave these NULL; all condition data lives in conditions JSONB.
+    if strategy_name == "S1_TrendPullback":
+        swing = ta_result.get("swing_setup") or {}
+        cond = swing.get("conditions") or {}
+        levels = swing.get("levels") or {}
+        risk_dict = swing.get("risk") or {}
+        # Use swing engine's verdict + score (respects config thresholds + WATCH support)
+        verdict = str(swing.get("verdict", "NO_TRADE"))
+        score = int(swing.get("setup_score") or 0)
+        score_decile = 10 if score >= 100 else max(1, min(10, (score // 10) + 1))
+        uptrend_confirmed = bool(cond.get("uptrend_confirmed"))
+        weekly_trend_aligned = bool(cond.get("weekly_trend_aligned"))
+        near_support = bool(cond.get("near_support"))
+        reversal_found = bool((cond.get("reversal_candle") or {}).get("found"))
+        trigger_ok = bool(cond.get("trigger_ok"))
+        rr_label = cond.get("rr_label")
+        support_is_provisional = bool(levels.get("support_is_provisional"))
+        # rr_ratio: prefer swing engine's value (same source as before)
+        rr_ratio = (
+            risk_dict.get("rr_ratio") if risk_dict.get("rr_ratio") is not None
+            else cond.get("rr_ratio")
+        )
+        # entry/stop/target from swing engine risk levels
+        entry_price = float(ta_result.get("price", 0))
+        stop_loss = risk_dict.get("stop_loss")
+        target = risk_dict.get("target")
+    else:
+        verdict = strat_result.verdict
+        uptrend_confirmed = False
+        weekly_trend_aligned = False
+        near_support = False
+        reversal_found = False
+        trigger_ok = False
+        rr_label = None
+        support_is_provisional = False
+
+    # Serialise conditions list to JSONB (all strategies)
+    conditions_json = (
+        json.dumps([
+            {
+                "label": c.label,
+                "passed": bool(c.passed),
+                "value": c.value,
+                "required": c.required,
+            }
+            for c in strat_result.conditions
+        ])
+        if strat_result.conditions
+        else None
+    )
 
     return BacktestSignal(
         ticker=ticker,
         signal_date=signal_date,
-        verdict=str(swing.get("verdict", "NO_TRADE")),
+        verdict=verdict,
         setup_score=score,
         score_decile=score_decile,
-        uptrend_confirmed=bool(cond.get("uptrend_confirmed")),
-        weekly_trend_aligned=bool(cond.get("weekly_trend_aligned")),
-        near_support=bool(cond.get("near_support")),
+        uptrend_confirmed=uptrend_confirmed,
+        weekly_trend_aligned=weekly_trend_aligned,
+        near_support=near_support,
         support_strength=sr.get("support_strength"),
-        reversal_found=bool((cond.get("reversal_candle") or {}).get("found")),
-        trigger_ok=bool(cond.get("trigger_ok")),
-        rr_ratio=risk.get("rr_ratio") if risk.get("rr_ratio") is not None else cond.get("rr_ratio"),
-        rr_label=cond.get("rr_label"),
-        support_is_provisional=bool(levels.get("support_is_provisional")),
-        entry_price=float(result.get("price", 0)),
-        stop_loss=risk.get("stop_loss"),
-        target=risk.get("target"),
+        reversal_found=reversal_found,
+        trigger_ok=trigger_ok,
+        rr_ratio=rr_ratio,
+        rr_label=rr_label,
+        support_is_provisional=support_is_provisional,
+        entry_price=entry_price,
+        stop_loss=stop_loss,
+        target=target,
         four_h_available=bool(four_h.get("four_h_available")),
         four_h_confirmed=bool(four_h.get("four_h_confirmed")),
         four_h_reversal=bool(four_h.get("four_h_reversal")),
         four_h_trigger=bool(four_h.get("four_h_trigger")),
         four_h_rsi=four_h.get("four_h_rsi"),
-        four_h_upgrade=bool(result.get("four_h_upgrade")),
+        four_h_upgrade=bool(ta_result.get("four_h_upgrade")),
+        strategy_name=strategy_name,
+        conditions_json=conditions_json,
     )
 
 
@@ -312,8 +390,10 @@ def _aggregate_results(results: list[BacktestResult]) -> dict:
 
 def _auto_label(config: BacktestConfig) -> str:
     ws = "W-ON" if config.require_weekly_aligned else "W-OFF"
+    strat = config.strategy_name or "S1_TrendPullback"
     return (
         f"{config.ticker} · "
+        f"{strat} · "
         f"E{config.entry_score_threshold} · "
         f"W{config.watch_score_threshold} · "
         f"RR{config.min_rr_ratio} · "
@@ -346,6 +426,13 @@ async def run_backtest(
         cutoff = pd.Timestamp.now() - pd.DateOffset(years=config.lookback_years)
         full_df = full_df[full_df.index >= cutoff].copy()
 
+    # Resolve strategy once before the loop
+    from backtesting.strategies.registry import STRATEGY_REGISTRY as _REG
+    _registry_by_name = {s.name: s for s in _REG}
+    strategy = _registry_by_name.get(config.strategy_name)
+    if strategy is None:
+        raise ValueError(f"Unknown strategy: {config.strategy_name}")
+
     results: list[BacktestResult] = []
     total_bars = len(full_df)
 
@@ -371,17 +458,36 @@ async def run_backtest(
         else:
             window_hourly = None
 
-
         try:
-            result = analyze_ticker_from_df(config.ticker, window_df, config, hourly_df=window_hourly)
+            ta_result = analyze_ticker_from_df(config.ticker, window_df, config, hourly_df=window_hourly)
         except Exception:
             continue
 
-        if result.get("swing_setup", {}).get("verdict") not in ("ENTRY", "WATCH"):
-            continue
+        snapshot = _make_snapshot(ta_result)
+
+        if config.strategy_name == "S1_TrendPullback":
+            # S1 backward compat: use the swing engine's threshold-adjusted verdict
+            # so WATCH signals and config thresholds are preserved exactly as before.
+            if ta_result.get("swing_setup", {}).get("verdict") not in ("ENTRY", "WATCH"):
+                continue
+        else:
+            # Non-S1: gate on strategy's own entry conditions
+            if not strategy.should_enter(snapshot):
+                continue
+
+        strat_result = strategy.evaluate(snapshot)
+
+        if config.strategy_name != "S1_TrendPullback":
+            if strat_result.verdict not in ("ENTRY", "WATCH"):
+                continue
+            if strat_result.risk is None:
+                continue
 
         signal_bar_index = i - 1
-        signal = _build_signal(config.ticker, run_id, full_df, signal_bar_index, result)
+        signal = _build_signal(
+            config.ticker, run_id, full_df, signal_bar_index,
+            ta_result, strat_result, config.strategy_name,
+        )
         outcome = _resolve_outcome(signal, full_df, signal_bar_index)
         results.append(BacktestResult(signal=signal, outcome=outcome))
 

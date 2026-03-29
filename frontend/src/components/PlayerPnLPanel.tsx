@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { createChart, LineStyle } from 'lightweight-charts'
-import type { IChartApi } from 'lightweight-charts'
+import type { IChartApi, LogicalRange } from 'lightweight-charts'
 import type { PnLPoint } from '../types'
 
 export const RUN_COLOURS = [
@@ -109,33 +109,32 @@ export default function PlayerPnLPanel({
     if (!chartRef.current || !mainChart) return
     const pnlChart = chartRef.current
 
-    const unsubMain = mainChart
-      .timeScale()
-      .subscribeVisibleLogicalRangeChange((range) => {
-        if (!range) return
-        if (syncingFromPnlRef.current) {
-          syncingFromPnlRef.current = false
-          return
-        }
-        syncingFromMainRef.current = true
-        pnlChart.timeScale().setVisibleLogicalRange(range)
-      })
+    const onMainChange = (range: LogicalRange | null) => {
+      if (!range) return
+      if (syncingFromPnlRef.current) {
+        syncingFromPnlRef.current = false
+        return
+      }
+      syncingFromMainRef.current = true
+      pnlChart.timeScale().setVisibleLogicalRange(range)
+    }
 
-    const unsubPnl = pnlChart
-      .timeScale()
-      .subscribeVisibleLogicalRangeChange((range) => {
-        if (!range) return
-        if (syncingFromMainRef.current) {
-          syncingFromMainRef.current = false
-          return
-        }
-        syncingFromPnlRef.current = true
-        mainChart.timeScale().setVisibleLogicalRange(range)
-      })
+    const onPnlChange = (range: LogicalRange | null) => {
+      if (!range) return
+      if (syncingFromMainRef.current) {
+        syncingFromMainRef.current = false
+        return
+      }
+      syncingFromPnlRef.current = true
+      mainChart.timeScale().setVisibleLogicalRange(range)
+    }
+
+    mainChart.timeScale().subscribeVisibleLogicalRangeChange(onMainChange)
+    pnlChart.timeScale().subscribeVisibleLogicalRangeChange(onPnlChange)
 
     return () => {
-      unsubMain()
-      unsubPnl()
+      mainChart.timeScale().unsubscribeVisibleLogicalRangeChange(onMainChange)
+      pnlChart.timeScale().unsubscribeVisibleLogicalRangeChange(onPnlChange)
     }
   }, [mainChart])
 

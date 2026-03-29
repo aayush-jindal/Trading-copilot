@@ -222,6 +222,19 @@ def init_db() -> None:
     conn.execute("ALTER TABLE backtest_signals ADD COLUMN IF NOT EXISTS four_h_rsi       NUMERIC(6,2)")
     conn.execute("ALTER TABLE backtest_signals ADD COLUMN IF NOT EXISTS four_h_upgrade   BOOLEAN DEFAULT FALSE")
 
+    # Phase 7.1: strategy name + conditions JSONB — backward compatible defaults
+    conn.execute(
+        "ALTER TABLE backtest_runs ADD COLUMN IF NOT EXISTS "
+        "strategy_name VARCHAR(50) DEFAULT 'S1_TrendPullback'"
+    )
+    conn.execute(
+        "ALTER TABLE backtest_signals ADD COLUMN IF NOT EXISTS "
+        "strategy_name VARCHAR(50) DEFAULT 'S1_TrendPullback'"
+    )
+    conn.execute(
+        "ALTER TABLE backtest_signals ADD COLUMN IF NOT EXISTS conditions JSONB"
+    )
+
     conn.execute("""
         CREATE TABLE IF NOT EXISTS hourly_price_history (
             id          SERIAL PRIMARY KEY,

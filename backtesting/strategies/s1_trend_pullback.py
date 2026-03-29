@@ -54,6 +54,7 @@ class TrendPullbackStrategy(BaseStrategy):
     def _check_conditions(self, snapshot) -> list:
         swing = snapshot.swing_setup or {}
         conditions_data = swing.get("conditions", {})
+        rr_label = conditions_data.get("rr_label")
         return [
             Condition(
                 label="Uptrend (price above SMA50 & 200)",
@@ -103,11 +104,20 @@ class TrendPullbackStrategy(BaseStrategy):
                 value="fired" if conditions_data.get("trigger_fired") else "waiting",
                 required="waiting for breakout"
             ),
+            Condition(
+                label="R:R quality",
+                passed=rr_label not in ("poor", "bad"),
+                value=rr_label or "unavailable",
+                required="marginal or better",
+            ),
         ]
 
     def _compute_risk(self, snapshot) -> object | None:
         swing = snapshot.swing_setup
         if not swing:
+            return None
+        rr_label = (swing.get("conditions") or {}).get("rr_label")
+        if rr_label == "poor":
             return None
         risk = swing.get("risk", {})
         stop = risk.get("stop_loss")
