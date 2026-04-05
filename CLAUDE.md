@@ -6,7 +6,7 @@ surfaces validated strategy setups ranked by conviction, provides exact
 entry/stop/target/position sizing, and tracks open trades for exit alerts.
 
 ## Current active phase
-Read `.claude/phase7.md` before doing any work.
+Read `.claude/integration.md` before doing any work.
 Complete one numbered task at a time. Do not start the next task until
 the current one is verified and CHANGELOG.md is updated.
 
@@ -87,9 +87,31 @@ to strategy factory code. Do not recompute them — read them from snapshot.
 - `support_resistance.support_is_provisional` — True means unconfirmed swing low
 - `support_resistance.resistance_is_provisional` — same for resistance
 
-These three new signal groups (4H, R:R quality, provisional S/R) are
-NOT yet integrated into any strategy. Integration requires querying
-backtest_signals outcome data first. See ADR-017.
+R:R quality (rr_label) and trigger_ok are now integrated into S1, S2, S8
+as of Phase 7. Provisional S/R and 4H remain deferred — see ADR-017.
+
+---
+
+## Ticker quality guideline
+
+Empirical findings from Phase 7 hypothesis backtest (10,906 signals, 30 tickers).
+
+**S1-compatible** (steady trend, reliable S/R — positive EV across parameter sweep):
+```
+SPY  QQQ  AAPL MSFT COST WMT  MCD  TXN
+NOW  AVGO JPM  V    MA   UNH  HD   GOOGL
+NFLX PANW MU   SHOP PYPL
+```
+
+**S1-incompatible** (volatile or unreliable S/R — negative EV across all combinations):
+```
+MSTR  TSLA  COIN  INTC  ORCL  SNAP
+```
+These tickers may suit S2 (RSI reversion) or S8 (stochastic cross) but should
+not be used with S1_TrendPullback. When a user asks to backtest these with S1,
+warn them and suggest S2/S8.
+
+---
 
 ## Architecture reference
 See `.claude/architecture.md`

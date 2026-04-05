@@ -314,6 +314,44 @@ def init_db() -> None:
         )
     """)
 
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS option_signals (
+            id                  SERIAL PRIMARY KEY,
+            user_id             INTEGER REFERENCES users(id),
+            ticker              TEXT NOT NULL,
+            strike              DOUBLE PRECISION NOT NULL,
+            expiry              TEXT NOT NULL,
+            option_type         TEXT NOT NULL,
+            dte                 INTEGER,
+            spot                DOUBLE PRECISION,
+            bid                 DOUBLE PRECISION,
+            ask                 DOUBLE PRECISION,
+            mid                 DOUBLE PRECISION,
+            open_interest       INTEGER,
+            bid_ask_spread_pct  DOUBLE PRECISION,
+            chain_iv            DOUBLE PRECISION,
+            iv_rank             DOUBLE PRECISION,
+            iv_percentile       DOUBLE PRECISION,
+            iv_regime           TEXT,
+            garch_vol           DOUBLE PRECISION,
+            theo_price          DOUBLE PRECISION,
+            edge_pct            DOUBLE PRECISION,
+            direction           TEXT,
+            delta               DOUBLE PRECISION,
+            gamma               DOUBLE PRECISION,
+            theta               DOUBLE PRECISION,
+            vega                DOUBLE PRECISION,
+            conviction          DOUBLE PRECISION,
+            scanned_at          TIMESTAMP DEFAULT NOW()
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_option_signals_ticker ON option_signals(ticker)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_option_signals_scanned ON option_signals(scanned_at DESC)"
+    )
+
     conn.commit()
     conn.close()
 

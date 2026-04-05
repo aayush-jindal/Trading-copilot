@@ -15,7 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.database import init_db
 from app.dependencies import get_current_user
-from app.routers import analysis, auth, data, internal, notifications, options, player, strategies, synthesis, trades, watchlist
+from app.routers import analysis, auth, chain_scan, data, internal, notifications, options, player, strategies, synthesis, trades, watchlist
 from app.routers.player import stream_router as player_stream_router
 
 
@@ -56,6 +56,7 @@ app.include_router(options.router,       **_auth)
 app.include_router(strategies.router,    **_auth)
 app.include_router(trades.router,        **_auth)
 app.include_router(player.router,        **_auth)
+app.include_router(chain_scan.router,    **_auth)
 
 
 @app.get("/health")

@@ -199,13 +199,16 @@ def _build_signal(
         target = risk_dict.get("target")
     else:
         verdict = strat_result.verdict
-        uptrend_confirmed = False
-        weekly_trend_aligned = False
-        near_support = False
-        reversal_found = False
-        trigger_ok = False
-        rr_label = None
-        support_is_provisional = False
+        _swing_cond = (ta_result.get("swing_setup") or {}).get("conditions") or {}
+        uptrend_confirmed = bool(_swing_cond.get("uptrend_confirmed"))
+        weekly_trend_aligned = bool(_swing_cond.get("weekly_trend_aligned"))
+        near_support = bool(_swing_cond.get("near_support"))
+        reversal_found = bool((_swing_cond.get("reversal_candle") or {}).get("found"))
+        trigger_ok = bool(_swing_cond.get("trigger_ok"))
+        rr_label = _swing_cond.get("rr_label")
+        support_is_provisional = bool(
+            ((ta_result.get("swing_setup") or {}).get("levels") or {}).get("support_is_provisional")
+        )
 
     # Serialise conditions list to JSONB (all strategies)
     conditions_json = (

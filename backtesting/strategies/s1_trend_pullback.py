@@ -125,6 +125,10 @@ class TrendPullbackStrategy(BaseStrategy):
         if stop is None or target is None:
             return None
         entry = snapshot.price
+        atr = snapshot.volatility.get("atr", 0) or 0
+        max_target = entry + 2.0 * atr
+        if atr > 0 and target > max_target:
+            target = round(entry + 1.5 * atr, 4)
         raw_risk = entry - stop
         rr = (target - entry) / raw_risk if raw_risk > 0 else 0.0
         entry_zone = risk.get("entry_zone", {})

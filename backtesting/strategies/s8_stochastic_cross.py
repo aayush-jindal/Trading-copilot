@@ -77,7 +77,9 @@ class StochasticCrossStrategy(BaseStrategy):
         stoch_d = momentum.get("stochastic_d") or 0.0
         rsi = momentum.get("rsi") or 0.0
         prev_k = self._prev_k.get("", stoch_k)
-        rr_label = ((snapshot.swing_setup or {}).get("conditions") or {}).get("rr_label")
+        swing_cond = ((snapshot.swing_setup or {}).get("conditions") or {})
+        rr_label = swing_cond.get("rr_label")
+        trigger_ok = bool(swing_cond.get("trigger_ok"))
 
         return [
             Condition(
@@ -103,6 +105,12 @@ class StochasticCrossStrategy(BaseStrategy):
                 passed=rr_label not in ("poor", "bad"),
                 value=rr_label or "unavailable",
                 required="marginal or better",
+            ),
+            Condition(
+                label="Trigger bar",
+                passed=trigger_ok,
+                value="fired" if trigger_ok else "not fired",
+                required="optional — adds score",
             ),
         ]
 

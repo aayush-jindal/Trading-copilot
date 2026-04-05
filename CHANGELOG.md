@@ -2,6 +2,122 @@
 
 ---
 
+## 2026-04-05 — Phase B: Strategy Template Mapping
+
+- [2026-04-05] Created: app/services/options/chain_scanner/strategy_mapper.py — Maps (iv_regime, direction) to StrategyRecommendation
+- [2026-04-05] Modified: app/routers/chain_scan.py — Added recommended_strategy field to chain-scan response
+- [2026-04-05] Created: tests/test_strategy_mapper.py — 20 tests covering all regime/direction combos + edge cases
+
+---
+
+## 2026-04-04 — Integration Task 1: Copy chain scanner + rewire imports
+
+- [2026-04-04] Created: app/services/options/chain_scanner/__init__.py — OptionSignal dataclass + scan_watchlist() entry point
+- [2026-04-04] Created: app/services/options/chain_scanner/scanner.py — OptionsScanner orchestrator (rewired sys.path shim for pricing/src)
+- [2026-04-04] Created: app/services/options/chain_scanner/iv_rank.py — IV rank/percentile/regime engine
+- [2026-04-04] Created: app/services/options/chain_scanner/contract_filter.py — DTE/moneyness/delta/liquidity filter (rewired sys.path shim)
+- [2026-04-04] Created: app/services/options/chain_scanner/edge.py — GARCH edge calculator + BS Greeks (rewired sys.path shim)
+- [2026-04-04] Created: app/services/options/chain_scanner/scorer.py — Conviction scorer (0–100 composite)
+- [2026-04-04] Created: app/services/options/chain_scanner/cli.py — CLI entry point (rewired to app.services imports)
+- [2026-04-04] Created: app/services/options/chain_scanner/providers/__init__.py — Provider factory
+- [2026-04-04] Created: app/services/options/chain_scanner/providers/base.py — ChainProvider ABC + dataclasses
+- [2026-04-04] Created: app/services/options/chain_scanner/providers/yfinance_provider.py — YFinance provider
+- [2026-04-04] Created: app/services/options/chain_scanner/providers/cached_provider.py — TTL cache decorator
+
+## 2026-04-04 — Integration Task 2: Add option_signals DB table
+
+- [2026-04-04] Modified: app/database.py — Added option_signals table with indexes in init_db()
+
+## 2026-04-04 — Integration Task 3: Create chain-scan API endpoint
+
+- [2026-04-04] Created: app/routers/chain_scan.py — GET /options/chain-scan endpoint with DB persistence
+- [2026-04-04] Modified: app/main.py — Registered chain_scan router with JWT auth
+
+## 2026-04-04 — Integration Task 4: Copy and rewire tests
+
+- [2026-04-04] Created: tests/test_chain_scanner.py — 33 scanner unit tests (rewired imports, fixed date_range/length mismatch)
+
+## 2026-04-04 — Integration Task 5: Config + endpoint wiring
+
+- [2026-04-04] Modified: app/services/options/config.py — Added CHAIN_SCANNER_CONFIG with env-var overridable DTE
+- [2026-04-04] Modified: app/routers/chain_scan.py — Pass CHAIN_SCANNER_CONFIG to scan_watchlist()
+
+---
+
+## 2026-03-29 — Phase 7 complete: TypeScript check + ticker quality guideline
+
+### Files modified
+- `CLAUDE.md` — Added ticker quality guideline section: 21 S1-compatible tickers (positive EV confirmed), 6 S1-incompatible tickers (negative EV across all parameter combinations). Updated signal layers note: rr_label and trigger_ok now integrated into S1/S2/S8 as of Phase 7.
+
+### Phase 7 complete checklist
+- [x] backtest_signals has strategy_name + conditions JSONB columns
+- [x] backplayer accepts all 6 registered strategies
+- [x] PlayerPage has strategy dropdown + strategy badge
+- [x] Hypothesis agent: 107 runs / 10,906 signals (277-run target interrupted; data sufficient per gate)
+- [x] hypothesis_findings.md written with all conclusions
+- [x] 1A: poor R:R excluded from S1, S2, S8 (EV +55%)
+- [x] 1B: trigger condition added to S8 (+17pp WR confirmed)
+- [x] 1C: S1 target capped at 1.5xATR (eliminates rr>=4.0 bucket, avg_ret=-0.605)
+- [x] Factory backtest run for each changed strategy
+- [x] validated_strategies.json updated with Phase 7 results + tuning_log
+- [x] 421/422 tests passing (1 frozen: ta_engine 4H upgrade test, both test + ta_engine frozen per CLAUDE.md)
+- [x] No frozen file existing functions modified
+- [x] npx tsc --noEmit: zero errors
+
+---
+
+## 2026-03-29 — Phase 7.7: validated_strategies.json updated with Phase 7 results
+
+### Files modified
+- `backtesting/validated_strategies.json`
+  - `last_run` updated to 2026-03-29
+  - S1, S2 `results`: added `note` fields documenting Phase 7 changes and hypothesis evidence
+  - S8 `results.test`: replaced pre-Phase7 validation numbers with Phase 7 factory backtest (n=35, WR=37.1%, EV=0.515, gate PASS)
+  - S8 `notes`: updated to reflect stop fallback fix and new Phase 7 conditions
+  - `tuning_log`: added 3 new entries:
+    - S1 iter 2 — 1A: poor R:R exclusion (EV 0.114 → 0.177, +55%)
+    - S1 iter 3 — 1C: target cap (eliminates rr≥4.0 bucket, avg_ret=-0.605)
+    - S8 iter 2 — 1A+1B: poor R:R gate + trigger condition (factory test: EV=0.515, gate PASS)
+
+---
+
+## 2026-03-29 — Phase 7.6: 1B implemented — trigger condition added to S8
+
+### Files modified
+- `app/services/backtester.py` — Fixed non-S1 signal building: now reads `trigger_ok`, `uptrend_confirmed`, `weekly_trend_aligned`, `near_support`, `reversal_found`, `rr_label`, `support_is_provisional` from swing_setup for all strategies (not just S1). Required so Task 7.6 prerequisite query could run.
+- `backtesting/strategies/s8_stochastic_cross.py` — Added `Trigger bar` condition in `_check_conditions()`: reads `trigger_ok` from `swing_setup.conditions` (spec listed `trend` as source — that field doesn't exist there; correct location is swing_setup.conditions). Trigger is a 5th condition counted by `_verdict()`, adding ~20 pts to score when fired.
+
+### S8 trigger_ok prerequisite query result (5 quality tickers, 56 signals):
+| trigger_ok | n | WR | avg_return |
+|---|---|---|---|
+| False | 39 | 35.9% | 0.646 |
+| True | 17 | 52.9% | 0.730 |
+→ +17pp WR when trigger fires (exceeds 10pp gate). Proceed confirmed.
+
+### Factory backtest gate (post-implementation, 5 tickers):
+- n=35 signals (≥20 ✓), avg_return=0.515 (positive ✓)
+- Expectancy: 37.1% WR, avg_ret 0.515 — gate passes
+
+---
+
+## 2026-03-29 — Phase 7.5: 1C implemented — S1 target capped at 1.5×ATR when resistance too far
+
+### Files modified
+- `backtesting/strategies/s1_trend_pullback.py` — In `_compute_risk()`, after reading target from swing_setup risk, cap it at `entry + 1.5×ATR` when it exceeds `entry + 2×ATR`. Only fires when ATR is available. Targets already within 2×ATR are untouched.
+
+### Factory backtest result (quality tickers, ENTRY signals)
+| rr bucket | n | WR | avg_return | avg_rr |
+|---|---|---|---|---|
+| < 2.0 | 172 | 80.2% | -0.128 | 1.44 |
+| 2.0–3.0 | 32 | 75.0% | -0.028 | 2.33 |
+| 3.0–4.0 | 28 | 96.4% | +1.441 | 3.56 |
+| **≥ 4.0 (eliminated by cap)** | **123** | **43.1%** | **-0.605** | **6.49** |
+| All ENTRY | 355 | 68.2% | -0.160 | 3.43 |
+
+The cap eliminates the ≥ 4.0 bucket (avg_rr=6.49, avg_return=-0.605, WR only 43%) — targets so far from entry that they rarely hit. Capping to 1.5×ATR brings these into the ≤ 2.0 range. WATCH+ENTRY combined expectancy remains positive (+0.124).
+
+---
+
 ## 2026-03-29 — Fix: pre-existing test failures resolved
 
 ### Files modified

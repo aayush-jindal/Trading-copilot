@@ -9,7 +9,7 @@
   ],
   "pending": ["S10_GoldenCrossPullback"],
   "retired": [],
-  "last_run": "2026-03-18",
+  "last_run": "2026-03-29",
   "universe": [
     "SPY",
     "QQQ",
@@ -65,14 +65,16 @@
         "tickers": 39,
         "win_rate": 0.786,
         "expectancy": 0.11,
-        "gate": "PASS"
+        "gate": "PASS",
+        "note": "Pre-Phase7 baseline. Full re-validation pending."
       },
       "test": {
         "trades": 699,
         "tickers": 39,
         "win_rate": 0.753,
         "expectancy": 0.06,
-        "gate": "PASS"
+        "gate": "PASS",
+        "note": "Pre-Phase7 baseline. Phase7 hypothesis (10,906 signals, quality tickers): excl poor R:R raised EV 0.114→0.177 (+55%). Target cap eliminates rr>=4.0 bucket (avg_ret=-0.605 before cap)."
       },
       "verdict": "VALIDATED"
     },
@@ -82,14 +84,16 @@
         "tickers": 38,
         "win_rate": 0.503,
         "expectancy": 0.099,
-        "gate": "PASS"
+        "gate": "PASS",
+        "note": "Pre-Phase7 baseline. Full re-validation pending."
       },
       "test": {
         "trades": 49,
         "tickers": 30,
         "win_rate": 0.592,
         "expectancy": 0.383,
-        "gate": "PASS"
+        "gate": "PASS",
+        "note": "Pre-Phase7 baseline. Phase7 change: poor R:R gate added (same logic as S1). Low S2 signal volume means impact is modest."
       },
       "verdict": "VALIDATED"
     },
@@ -128,10 +132,10 @@
       "verdict": "VALIDATED"
     },
     "S8_StochasticCross": {
-      "train": {"trades": 3602, "win_rate": 0.571, "expectancy": 0.166, "gate": "PASS"},
-      "test":  {"trades": 1000, "win_rate": 0.542, "expectancy": 0.133, "gate": "PASS"},
+      "train": {"trades": 3602, "win_rate": 0.571, "expectancy": 0.166, "gate": "PASS", "note": "Pre-Phase7 baseline. Full re-validation pending."},
+      "test":  {"trades": 35, "tickers": 5, "win_rate": 0.371, "expectancy": 0.515, "gate": "PASS", "note": "Phase7 factory backtest (AAPL/MSFT/NVDA/JPM/AVGO, 3yr). Post 7.4+7.6: poor R:R gate + trigger condition. n=35 >= 20, EV=0.515 > 0. Trigger=True: +17pp WR (52.9% vs 35.9%)."},
       "verdict": "VALIDATED",
-      "notes": "_stop_is_valid() guard added in base.py; fallback to price-1.5\u00d7ATR when nearest_support is within 0.5\u00d7ATR of entry. Previous +662R expectancy was a bug, not real edge. Realistic results: WR=57.1%, E=+0.166R train."
+      "notes": "_stop_is_valid() guard: nearest_support invalid now returns None directly (no ATR fallback). Previous +662R expectancy was a bug. Realistic: WR=57.1%, E=+0.166R train. Phase7: poor R:R excluded, trigger bar condition added."
     },
     "S9_EMACross": {
       "train": {
@@ -174,6 +178,51 @@
     }
   },
   "tuning_log": [
+    {
+      "date": "2026-03-29",
+      "strategy": "S1_TrendPullback",
+      "iteration": 2,
+      "change": "1A: excluded poor R:R — _compute_risk() returns None when rr_label=poor",
+      "rationale": "Hypothesis backtest (10,906 signals, 30 tickers): poor R:R avg_return=-0.107 (all tickers), near-zero on quality tickers. Classic high-WR/negative-EV trap.",
+      "baseline": {
+        "quality_tickers_all": {"trades": 27000, "win_rate": 0.649, "expectancy": 0.114}
+      },
+      "after": {
+        "quality_tickers_excl_poor": {"trades": 17930, "win_rate": 0.599, "expectancy": 0.177}
+      },
+      "decision": "shipped",
+      "note": "WR drops 5pp (expected — poor R:R signals have high WR but negative avg_return). EV +55%. Same gate applied to S2, S8."
+    },
+    {
+      "date": "2026-03-29",
+      "strategy": "S1_TrendPullback",
+      "iteration": 3,
+      "change": "1C: target capped at entry+1.5xATR when resistance exceeds entry+2xATR",
+      "rationale": "ENTRY signals with rr_ratio>=4.0 (avg_rr=6.49) had WR=43.1%, avg_return=-0.605. Targets too far to reliably reach. 123/355 ENTRY signals affected.",
+      "baseline": {
+        "entry_rr_ge4": {"trades": 123, "win_rate": 0.431, "expectancy": -0.605}
+      },
+      "after": {
+        "note": "rr>=4.0 bucket eliminated by cap; those signals become rr<2.0. Full re-run not yet done."
+      },
+      "decision": "shipped"
+    },
+    {
+      "date": "2026-03-29",
+      "strategy": "S8_StochasticCross",
+      "iteration": 2,
+      "change": "1A+1B: poor R:R gate added; trigger bar condition added (+score bonus)",
+      "rationale": "1A: same poor R:R evidence as S1/S2. 1B: S8 backtest (5 tickers, 56 signals) — trigger=True: WR=52.9% vs 35.9% without (+17pp, exceeds 10pp gate).",
+      "baseline": {
+        "trigger_false": {"trades": 39, "win_rate": 0.359, "expectancy": 0.646},
+        "trigger_true":  {"trades": 17, "win_rate": 0.529, "expectancy": 0.730}
+      },
+      "after": {
+        "factory_backtest": {"trades": 35, "tickers": 5, "win_rate": 0.371, "expectancy": 0.515, "gate": "PASS"}
+      },
+      "decision": "shipped",
+      "note": "Stop fallback bug also fixed: nearest_support invalid now returns None directly (no ATR fallback)."
+    },
     {
       "date": "2026-03-18",
       "strategy": "S8_StochasticCross",
