@@ -6,7 +6,7 @@ surfaces validated strategy setups ranked by conviction, provides exact
 entry/stop/target/position sizing, and tracks open trades for exit alerts.
 
 ## Current active phase
-Read `.claude/integration.md` before doing any work.
+Read `.claude/phase-c.md` before doing any work.
 Complete one numbered task at a time. Do not start the next task until
 the current one is verified and CHANGELOG.md is updated.
 
