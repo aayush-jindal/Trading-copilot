@@ -15,6 +15,7 @@ from app.services.options.chain_scanner import scan_watchlist, OptionSignal
 from app.services.options.chain_scanner.providers import create_provider
 from app.services.options.config import CHAIN_SCANNER_CONFIG
 from app.services.options.chain_scanner.strategy_mapper import map_signal
+from app.services.options.chain_scanner.strategy_pricer import price_recommendation
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/options", tags=["options"])
@@ -24,6 +25,7 @@ router = APIRouter(prefix="/options", tags=["options"])
 def chain_scan(
     tickers: Optional[str] = Query(None),
     top: int = Query(20, ge=1, le=100),
+    price: bool = Query(False, description="Price recommended strategies"),
     user: dict = Depends(get_current_user),
 ):
     # Resolve tickers
@@ -49,13 +51,13 @@ def chain_scan(
     _save_signals(signals, user["id"])
 
     return {
-        "signals": [_to_dict(s) for s in signals[:top]],
+        "signals": [_to_dict(s, price) for s in signals[:top]],
         "total": len(signals),
         "tickers_scanned": len(ticker_list),
     }
 
 
-def _to_dict(s: OptionSignal) -> dict:
+def _to_dict(s: OptionSignal, do_price: bool = False) -> dict:
     rec = map_signal(s)
     base = {
         "ticker": s.ticker, "strike": s.strike, "expiry": s.expiry,
@@ -82,6 +84,16 @@ def _to_dict(s: OptionSignal) -> dict:
             "edge_source": rec.edge_source,
         } if rec else None,
     }
+
+    if do_price and rec:
+        try:
+            base["priced_strategy"] = price_recommendation(s, rec)
+        except Exception as e:
+            logger.warning("Pricing failed for %s %s: %s", s.ticker, rec.strategy, e)
+            base["priced_strategy"] = None
+    else:
+        base["priced_strategy"] = None
+
     return base
 
 

@@ -2,6 +2,14 @@
 
 ---
 
+## 2026-04-08 — Phase C: Price Recommended Strategies
+
+- [2026-04-08] Created: app/services/options/chain_scanner/strategy_pricer.py — BS pricing + MC prob_profit for recommended strategies
+- [2026-04-08] Modified: app/routers/chain_scan.py — Added ?price=true param + priced_strategy field
+- [2026-04-08] Created: tests/test_strategy_pricer.py — 26 tests (strike resolution, credit/debit pricing, Greeks, stops/targets)
+
+---
+
 ## 2026-04-05 — Phase B: Strategy Template Mapping
 
 - [2026-04-05] Created: app/services/options/chain_scanner/strategy_mapper.py — Maps (iv_regime, direction) to StrategyRecommendation

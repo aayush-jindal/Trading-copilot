@@ -35,7 +35,7 @@ class TickerResult(BaseModel):
     sector:               Optional[str]       = None
     current_price:        Optional[float]     = None
     opportunities:        List[Dict[str, Any]] = []
-    knowledge_strategies: Optional[str]       = None
+    knowledge_strategies: Optional[Any]       = None
     error:                Optional[str]       = None
     formatted:            Optional[str]       = None  # terminal-style block (opt-in)
 
