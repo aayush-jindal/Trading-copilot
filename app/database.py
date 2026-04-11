@@ -352,6 +352,44 @@ def init_db() -> None:
         "CREATE INDEX IF NOT EXISTS idx_option_signals_scanned ON option_signals(scanned_at DESC)"
     )
 
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS option_trades (
+            id               SERIAL PRIMARY KEY,
+            user_id          INTEGER NOT NULL REFERENCES users(id),
+            ticker           TEXT NOT NULL,
+            strategy         TEXT NOT NULL,
+            is_credit        BOOLEAN NOT NULL DEFAULT FALSE,
+            legs             JSONB NOT NULL,
+            entry_premium    DOUBLE PRECISION NOT NULL,
+            exit_target      DOUBLE PRECISION,
+            option_stop      DOUBLE PRECISION,
+            max_profit       DOUBLE PRECISION,
+            max_loss         DOUBLE PRECISION,
+            spread_width     DOUBLE PRECISION,
+            expiry           TEXT NOT NULL,
+            dte_at_open      INTEGER NOT NULL,
+            chain_iv         DOUBLE PRECISION,
+            iv_rank          DOUBLE PRECISION,
+            iv_regime        TEXT,
+            conviction       DOUBLE PRECISION,
+            status           TEXT NOT NULL DEFAULT 'open',
+            entry_date       DATE NOT NULL DEFAULT CURRENT_DATE,
+            exit_date        DATE,
+            exit_price       DOUBLE PRECISION,
+            exit_reason      TEXT,
+            notes            TEXT,
+            created_at       TIMESTAMP DEFAULT NOW()
+        )
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_option_trades_user
+            ON option_trades(user_id) WHERE status = 'open'
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_option_trades_expiry
+            ON option_trades(expiry)
+    """)
+
     conn.commit()
     conn.close()
 

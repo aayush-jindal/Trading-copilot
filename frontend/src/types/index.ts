@@ -346,6 +346,51 @@ export interface OpenTrade {
   exit_alert?: string | null
 }
 
+// ── Options trade tracker ──────────────────────────────────────────────────────
+
+export interface OptionTradeCreate {
+  ticker: string
+  strategy: string
+  is_credit: boolean
+  legs: { action: string; option_type: string; strike: number; iv: number; price: number; delta: number; theta: number }[]
+  entry_premium: number
+  exit_target: number
+  option_stop: number
+  max_profit: number | null
+  max_loss: number | null
+  spread_width?: number | null
+  expiry: string
+  dte_at_open: number
+  chain_iv?: number | null
+  iv_rank?: number | null
+  iv_regime?: string | null
+  conviction?: number | null
+  notes?: string | null
+}
+
+export interface OptionTrade {
+  id: number
+  ticker: string
+  strategy: string
+  is_credit: boolean
+  legs: { action: string; option_type: string; strike: number; iv: number; price: number; delta: number; theta: number }[]
+  entry_premium: number
+  exit_target: number
+  option_stop: number
+  max_profit: number | null
+  max_loss: number | null
+  expiry: string
+  dte_remaining: number
+  entry_date: string
+  status: string
+  current_value: number | null
+  current_pnl: number | null
+  pnl_pct: number | null
+  exit_alert: string | null
+  conviction: number | null
+  iv_regime: string | null
+}
+
 // ── User settings ──────────────────────────────────────────────────────────────
 
 export interface UserSettings {

@@ -27,6 +27,20 @@
 
 ---
 
+## 2026-04-11 — Phase D: Options Trade Tracker
+
+- [2026-04-11] Modified: app/database.py — Added option_trades table with indexes
+- [2026-04-11] Modified: app/models.py — Added OptionTradeCreate and OptionTradeResponse models
+- [2026-04-11] Created: app/routers/option_trades.py — CRUD endpoints with BS repricing + exit alerts
+- [2026-04-11] Modified: app/main.py — Registered option_trades router
+- [2026-04-11] Modified: app/services/options_digest.py — Added nightly reprice + exit alert notifications
+- [2026-04-11] Modified: frontend/src/types/index.ts — Added OptionTradeCreate and OptionTrade types
+- [2026-04-11] Modified: frontend/src/api/client.ts — Added fetchOptionTrades, openOptionTrade, closeOptionTrade
+- [2026-04-11] Modified: frontend/src/components/ChainScannerPanel.tsx — Added "Log Trade" button on priced strategies
+- [2026-04-11] Modified: frontend/src/pages/TradeTrackerPage.tsx — Added Option Trades section with P&L and exit alerts
+
+---
+
 ## 2026-04-08 — Phase C: Price Recommended Strategies
 
 - [2026-04-08] Created: app/services/options/chain_scanner/strategy_pricer.py — BS pricing + MC prob_profit for recommended strategies

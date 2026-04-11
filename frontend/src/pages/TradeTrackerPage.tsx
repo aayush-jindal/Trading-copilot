@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { closeTrade, fetchOpenTrades, logTrade } from '../api/client'
+import { closeTrade, closeOptionTrade, fetchOpenTrades, fetchOptionTrades, logTrade } from '../api/client'
 import { useAuth } from '../context/AuthContext'
 import Logo from '../components/Logo'
-import type { OpenTrade } from '../types'
+import type { OpenTrade, OptionTrade } from '../types'
 
 // ── Strategy dropdown data ────────────────────────────────────────────────────
 
@@ -44,6 +44,20 @@ function AlertBadge({ alert }: { alert: string | null | undefined }) {
     return (
       <span className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded-full border bg-green-500/15 border-green-500/30 text-green-300 font-medium">
         ✓ Target
+      </span>
+    )
+  }
+  if (alert === 'EXPIRY_WARNING') {
+    return (
+      <span className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded-full border bg-red-500/15 border-red-500/30 text-red-300 font-medium">
+        Expiry
+      </span>
+    )
+  }
+  if (alert === 'THETA_DECAY') {
+    return (
+      <span className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded-full border bg-purple-500/15 border-purple-500/30 text-purple-300 font-medium">
+        Theta
       </span>
     )
   }
@@ -294,6 +308,76 @@ function LogTradeForm({ onLogged }: { onLogged: () => void }) {
   )
 }
 
+// ── OptionTradesTable ──────────────────────────────────────────────────────────
+
+function OptionTradesTable({
+  trades,
+  onClose,
+}: {
+  trades: OptionTrade[]
+  onClose: (id: number) => void
+}) {
+  if (trades.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center py-12 gap-3 animate-fade-in">
+        <p className="text-gray-500 text-sm">No open option trades.</p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="overflow-x-auto animate-fade-in">
+      <table className="w-full text-sm border-separate border-spacing-y-1">
+        <thead>
+          <tr className="text-[10px] text-gray-600 uppercase tracking-wider">
+            <th className="text-left px-3 py-1">Ticker</th>
+            <th className="text-left px-3 py-1">Strategy</th>
+            <th className="text-right px-3 py-1">Entry</th>
+            <th className="text-right px-3 py-1">Current</th>
+            <th className="text-right px-3 py-1">P&L</th>
+            <th className="text-right px-3 py-1">DTE</th>
+            <th className="text-center px-3 py-1">Alert</th>
+            <th className="text-center px-3 py-1">Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          {trades.map((t) => (
+            <tr
+              key={t.id}
+              className="glass rounded-xl border border-white/10 hover:border-white/20 transition-all"
+            >
+              <td className="px-3 py-2.5 font-mono font-bold text-white rounded-l-xl">{t.ticker}</td>
+              <td className="px-3 py-2.5 text-gray-400 font-mono text-xs">{t.strategy.replace(/_/g, ' ')}</td>
+              <td className="px-3 py-2.5 text-right font-mono text-gray-200">${t.entry_premium.toFixed(2)}</td>
+              <td className="px-3 py-2.5 text-right font-mono text-gray-300">
+                {t.current_value != null ? `$${t.current_value.toFixed(2)}` : '—'}
+              </td>
+              <td className={`px-3 py-2.5 text-right font-mono font-semibold tabular-nums ${t.current_pnl != null ? (t.current_pnl >= 0 ? 'text-green-400' : 'text-red-400') : 'text-gray-400'}`}>
+                {t.current_pnl != null ? `${t.current_pnl >= 0 ? '+' : ''}$${t.current_pnl.toFixed(2)}` : '—'}
+                {t.pnl_pct != null && (
+                  <span className="text-[10px] ml-1 opacity-70">({t.pnl_pct > 0 ? '+' : ''}{t.pnl_pct.toFixed(1)}%)</span>
+                )}
+              </td>
+              <td className="px-3 py-2.5 text-right font-mono text-gray-400">{t.dte_remaining}d</td>
+              <td className="px-3 py-2.5 text-center">
+                <AlertBadge alert={t.exit_alert} />
+              </td>
+              <td className="px-3 py-2.5 text-center rounded-r-xl">
+                <button
+                  onClick={() => onClose(t.id)}
+                  className="px-2.5 py-1 text-xs rounded-lg border border-white/10 text-gray-500 hover:text-red-400 hover:border-red-500/30 transition-all"
+                >
+                  Close
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
 // ── TradeTrackerPage ──────────────────────────────────────────────────────────
 
 export default function TradeTrackerPage() {
@@ -301,6 +385,7 @@ export default function TradeTrackerPage() {
   const navigate = useNavigate()
 
   const [trades, setTrades]       = useState<OpenTrade[]>([])
+  const [optTrades, setOptTrades] = useState<OptionTrade[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError]         = useState<string | null>(null)
   const [closing, setClosing]     = useState<number | null>(null)
@@ -309,7 +394,12 @@ export default function TradeTrackerPage() {
     setIsLoading(true)
     setError(null)
     try {
-      setTrades(await fetchOpenTrades())
+      const [eq, opt] = await Promise.all([
+        fetchOpenTrades(),
+        fetchOptionTrades().catch(() => [] as OptionTrade[]),
+      ])
+      setTrades(eq)
+      setOptTrades(opt)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load trades')
     } finally {
@@ -325,12 +415,20 @@ export default function TradeTrackerPage() {
     setClosing(id)
     try {
       await closeTrade(id)
-      // Re-fetch from server — source of truth, no optimistic filtering
       await loadTrades()
     } catch {
       // silently ignore close errors
     } finally {
       setClosing(null)
+    }
+  }
+
+  async function handleCloseOption(id: number) {
+    try {
+      await closeOptionTrade(id, 'manual_close')
+      await loadTrades()
+    } catch {
+      // silently ignore
     }
   }
 
@@ -403,6 +501,21 @@ export default function TradeTrackerPage() {
             <div className="py-8 text-center text-sm text-gray-600">Loading trades…</div>
           ) : (
             <TradeTable trades={tradesForTable} onClose={handleClose} />
+          )}
+        </div>
+
+        {/* Open option trades */}
+        <div className="glass rounded-2xl p-5 border border-white/10">
+          <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-4">
+            Option Trades
+            {optTrades.length > 0 && (
+              <span className="ml-2 text-gray-600 font-normal normal-case">({optTrades.length})</span>
+            )}
+          </h2>
+          {isLoading ? (
+            <div className="py-8 text-center text-sm text-gray-600">Loading…</div>
+          ) : (
+            <OptionTradesTable trades={optTrades} onClose={handleCloseOption} />
           )}
         </div>
 

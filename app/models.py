@@ -236,6 +236,49 @@ class TradeResponse(BaseModel):
     exit_alert: str | None = None
 
 
+class OptionTradeCreate(BaseModel):
+    ticker: str
+    strategy: str
+    is_credit: bool
+    legs: list[dict]
+    entry_premium: float
+    exit_target: float
+    option_stop: float
+    max_profit: float | None = None
+    max_loss: float | None = None
+    spread_width: float | None = None
+    expiry: str
+    dte_at_open: int
+    chain_iv: float | None = None
+    iv_rank: float | None = None
+    iv_regime: str | None = None
+    conviction: float | None = None
+    notes: str | None = None
+
+
+class OptionTradeResponse(BaseModel):
+    id: int
+    ticker: str
+    strategy: str
+    is_credit: bool
+    legs: list[dict]
+    entry_premium: float
+    exit_target: float
+    option_stop: float
+    max_profit: float | None
+    max_loss: float | None
+    expiry: str
+    dte_remaining: int
+    entry_date: str
+    status: str
+    current_value: float | None
+    current_pnl: float | None
+    pnl_pct: float | None
+    exit_alert: str | None
+    conviction: float | None
+    iv_regime: str | None
+
+
 class AnalysisResponse(BaseModel):
     ticker: str
     price: float

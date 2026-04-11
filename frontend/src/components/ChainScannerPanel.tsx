@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { chainScan, getCachedSignals } from '../api/client'
+import { chainScan, getCachedSignals, openOptionTrade } from '../api/client'
 import type { ChainSignal, ChainScanResponse, PricedStrategy } from '../types'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -218,8 +218,63 @@ function SignalCard({ signal }: { signal: ChainSignal }) {
       )}
 
       {/* Priced strategy */}
-      {signal.priced_strategy && <PricedStrategySection ps={signal.priced_strategy} />}
+      {signal.priced_strategy && (
+        <>
+          <PricedStrategySection ps={signal.priced_strategy} />
+          <LogTradeButton signal={signal} ps={signal.priced_strategy} />
+        </>
+      )}
     </div>
+  )
+}
+
+function LogTradeButton({ signal, ps }: { signal: ChainSignal; ps: PricedStrategy }) {
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+
+  async function handleLog() {
+    setSaving(true)
+    try {
+      await openOptionTrade({
+        ticker: signal.ticker,
+        strategy: ps.strategy,
+        is_credit: ps.is_credit,
+        legs: ps.legs,
+        entry_premium: ps.entry,
+        exit_target: ps.exit_target,
+        option_stop: ps.option_stop,
+        max_profit: ps.max_profit,
+        max_loss: ps.max_loss,
+        spread_width: ps.spread_width ?? null,
+        expiry: signal.expiry,
+        dte_at_open: signal.dte,
+        chain_iv: signal.chain_iv,
+        iv_rank: signal.iv_rank,
+        iv_regime: signal.iv_regime,
+        conviction: signal.conviction,
+      })
+      setSaved(true)
+    } catch {
+      // silently ignore
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (saved) {
+    return (
+      <div className="text-xs text-green-400 font-medium mt-1">Trade logged</div>
+    )
+  }
+
+  return (
+    <button
+      onClick={handleLog}
+      disabled={saving}
+      className="mt-1 px-3 py-1.5 rounded-lg border border-green-500/30 bg-green-500/10 text-green-400 text-xs font-medium hover:bg-green-500/20 disabled:opacity-40 transition-colors"
+    >
+      {saving ? 'Logging\u2026' : 'Log Trade'}
+    </button>
   )
 }
 

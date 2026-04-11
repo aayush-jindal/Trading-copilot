@@ -77,9 +77,62 @@ def run_nightly_chain_scan() -> dict:
         conn.commit()
         conn.close()
 
+    # Reprice open option trades and generate alerts
+    alerts_sent = _reprice_open_trades()
+
     return {
         "options_signals": len(signals),
         "options_tickers": len(tickers),
         "options_errors": errors,
+        "options_alerts": alerts_sent,
         "options_duration": round(time.time() - start, 1),
     }
+
+
+def _reprice_open_trades() -> int:
+    """Reprice all open option trades and notify users on exit alerts."""
+    import json
+    from datetime import datetime, timezone
+
+    from app.routers.option_trades import _reprice_trade
+
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT * FROM option_trades WHERE status = 'open'"
+    ).fetchall()
+    conn.close()
+
+    if not rows:
+        return 0
+
+    alerts_sent = 0
+    for row in rows:
+        try:
+            result = _reprice_trade(dict(row))
+            if result.exit_alert:
+                conn = get_db()
+                content = json.dumps({
+                    "date": datetime.now(timezone.utc).strftime("%b %-d"),
+                    "entries": [{
+                        "ticker": result.ticker,
+                        "summary": (
+                            f"{result.ticker} {result.strategy}: {result.exit_alert} "
+                            f"— P&L ${result.current_pnl:.2f} ({result.pnl_pct:+.1f}%)"
+                            if result.current_pnl is not None
+                            else f"{result.ticker} {result.strategy}: {result.exit_alert}"
+                        ),
+                    }],
+                })
+                conn.execute(
+                    "INSERT INTO notifications (user_id, content, created_at, is_read) "
+                    "VALUES (%s, %s, %s, FALSE)",
+                    (row["user_id"], content,
+                     datetime.now(timezone.utc).isoformat()),
+                )
+                conn.commit()
+                conn.close()
+                alerts_sent += 1
+        except Exception as e:
+            logger.warning("Failed to reprice trade %s: %s", row.get("id"), e)
+
+    return alerts_sent

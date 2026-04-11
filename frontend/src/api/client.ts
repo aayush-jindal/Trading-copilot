@@ -5,6 +5,8 @@ import type {
   Notification,
   OpenTrade,
   OptionsScanResponse,
+  OptionTrade,
+  OptionTradeCreate,
   PriceHistoryResponse,
   StrategyResult,
   UserSettings,
@@ -315,4 +317,32 @@ export async function logTrade(
 export async function closeTrade(tradeId: number): Promise<void> {
   const res = await apiFetch(`/api/trades/${tradeId}`, { method: 'DELETE' })
   if (!res.ok) throw new Error(`Failed to close trade ${tradeId}`)
+}
+
+// ── Option trades ─────────────────────────────────────────────────────────────
+
+export async function fetchOptionTrades(status = 'open'): Promise<OptionTrade[]> {
+  const res = await apiFetch(`/api/option-trades/?status=${status}`)
+  if (!res.ok) throw new Error('Failed to fetch option trades')
+  return res.json()
+}
+
+export async function openOptionTrade(trade: OptionTradeCreate): Promise<OptionTrade> {
+  const res = await apiFetch('/api/option-trades/', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(trade),
+  })
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({}))
+    throw new Error((detail as { detail?: string })?.detail ?? `Failed to open trade (${res.status})`)
+  }
+  return res.json()
+}
+
+export async function closeOptionTrade(tradeId: number, exitReason?: string): Promise<void> {
+  const params = new URLSearchParams()
+  if (exitReason) params.set('exit_reason', exitReason)
+  const res = await apiFetch(`/api/option-trades/${tradeId}?${params}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error(`Failed to close option trade ${tradeId}`)
 }
