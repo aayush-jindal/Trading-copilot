@@ -2,6 +2,7 @@ import type {
   AnalysisResponse,
   CachedSignalsResponse,
   ChainScanResponse,
+  IVHistoryResponse,
   Notification,
   OpenTrade,
   OptionsScanResponse,
@@ -345,4 +346,10 @@ export async function closeOptionTrade(tradeId: number, exitReason?: string): Pr
   if (exitReason) params.set('exit_reason', exitReason)
   const res = await apiFetch(`/api/option-trades/${tradeId}?${params}`, { method: 'DELETE' })
   if (!res.ok) throw new Error(`Failed to close option trade ${tradeId}`)
+}
+
+export async function getIVHistory(ticker: string, days = 365): Promise<IVHistoryResponse> {
+  const res = await apiFetch(`/api/options/iv-history/${ticker}?days=${days}`)
+  if (!res.ok) throw new Error(`Failed to fetch IV history for ${ticker}`)
+  return res.json()
 }

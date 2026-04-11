@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import { chainScan, getCachedSignals, openOptionTrade } from '../api/client'
-import type { ChainSignal, ChainScanResponse, PricedStrategy } from '../types'
+import { chainScan, getCachedSignals, getIVHistory, openOptionTrade } from '../api/client'
+import type { ChainSignal, ChainScanResponse, IVHistoryPoint, PricedStrategy } from '../types'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -139,6 +139,68 @@ function PricedStrategySection({ ps }: { ps: PricedStrategy }) {
   )
 }
 
+// ── IV Sparkline ─────────────────────────────────────────────────────────────
+
+function IVSparkline({ points, currentRank, days }: { points: IVHistoryPoint[]; currentRank: number | null; days: number }) {
+  const ivs = points.map((p) => p.atm_iv).filter((v): v is number => v != null)
+  if (ivs.length < 2) return null
+
+  const w = 160
+  const h = 32
+  const pad = 2
+  const min = Math.min(...ivs)
+  const max = Math.max(...ivs)
+  const range = max - min || 1
+
+  const pathD = ivs
+    .map((v, i) => {
+      const x = pad + (i / (ivs.length - 1)) * (w - 2 * pad)
+      const y = pad + (1 - (v - min) / range) * (h - 2 * pad)
+      return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`
+    })
+    .join(' ')
+
+  return (
+    <div className="flex items-center gap-2">
+      <svg width={w} height={h} className="shrink-0">
+        <path d={pathD} fill="none" stroke="#60a5fa" strokeWidth="1.5" strokeLinejoin="round" />
+        {ivs.length > 0 && (() => {
+          const lastX = pad + ((ivs.length - 1) / (ivs.length - 1)) * (w - 2 * pad)
+          const lastY = pad + (1 - (ivs[ivs.length - 1] - min) / range) * (h - 2 * pad)
+          return <circle cx={lastX} cy={lastY} r={2.5} fill="#60a5fa" />
+        })()}
+      </svg>
+      <div className="flex flex-col text-[10px] text-gray-500">
+        <span>{days}d IV history</span>
+        {currentRank != null && (
+          <span className="text-gray-400 font-mono">rank {currentRank.toFixed(0)}</span>
+        )}
+        <span className={`font-mono ${days >= 30 ? 'text-green-500' : 'text-yellow-500'}`}>
+          {days >= 30 ? 'Real IV' : 'Proxy IV'}
+        </span>
+      </div>
+    </div>
+  )
+}
+
+function IVHistoryWidget({ ticker }: { ticker: string }) {
+  const [data, setData] = useState<{ points: IVHistoryPoint[]; rank: number | null; days: number } | null>(null)
+
+  useEffect(() => {
+    getIVHistory(ticker)
+      .then((res) => {
+        if (res.history.length > 0) {
+          setData({ points: res.history, rank: res.current_rank, days: res.history.length })
+        }
+      })
+      .catch(() => {})
+  }, [ticker])
+
+  if (!data) return null
+
+  return <IVSparkline points={data.points} currentRank={data.rank} days={data.days} />
+}
+
 // ── Signal card ──────────────────────────────────────────────────────────────
 
 function SignalCard({ signal }: { signal: ChainSignal }) {
@@ -172,6 +234,7 @@ function SignalCard({ signal }: { signal: ChainSignal }) {
         <span className="text-xs text-gray-500">
           GARCH <span className="font-mono text-gray-300">{(signal.garch_vol * 100).toFixed(1)}%</span>
         </span>
+        <IVHistoryWidget ticker={signal.ticker} />
       </div>
 
       {/* Edge + direction + conviction row */}

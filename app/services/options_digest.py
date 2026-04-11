@@ -77,6 +77,9 @@ def run_nightly_chain_scan() -> dict:
         conn.commit()
         conn.close()
 
+    # Store daily IV snapshots for iv_history
+    _store_iv_snapshots(signals)
+
     # Reprice open option trades and generate alerts
     alerts_sent = _reprice_open_trades()
 
@@ -87,6 +90,58 @@ def run_nightly_chain_scan() -> dict:
         "options_alerts": alerts_sent,
         "options_duration": round(time.time() - start, 1),
     }
+
+
+def _store_iv_snapshots(signals: list) -> None:
+    """Extract ATM IV per ticker from scan signals and upsert into iv_history."""
+    if not signals:
+        return
+
+    # Group signals by ticker
+    by_ticker: dict[str, list] = {}
+    for s in signals:
+        by_ticker.setdefault(s.ticker, []).append(s)
+
+    conn = get_db()
+    for ticker, sigs in by_ticker.items():
+        spot = sigs[0].spot
+        # Find ATM call and put (closest to spot)
+        calls = [s for s in sigs if s.direction == 'call' or getattr(s, 'option_type', '') == 'call']
+        puts = [s for s in sigs if s.direction == 'put' or getattr(s, 'option_type', '') == 'put']
+
+        atm_iv_call = None
+        atm_iv_put = None
+
+        if calls:
+            atm_call = min(calls, key=lambda s: abs(s.strike - spot))
+            atm_iv_call = atm_call.chain_iv
+        if puts:
+            atm_put = min(puts, key=lambda s: abs(s.strike - spot))
+            atm_iv_put = atm_put.chain_iv
+
+        # Compute average
+        ivs = [v for v in [atm_iv_call, atm_iv_put] if v is not None]
+        atm_iv_avg = sum(ivs) / len(ivs) if ivs else None
+
+        if atm_iv_avg is None:
+            continue
+
+        try:
+            conn.execute("""
+                INSERT INTO iv_history
+                    (ticker, scan_date, atm_iv_call, atm_iv_put, atm_iv_avg, spot)
+                VALUES (%s, CURRENT_DATE, %s, %s, %s, %s)
+                ON CONFLICT (ticker, scan_date) DO UPDATE
+                SET atm_iv_call = EXCLUDED.atm_iv_call,
+                    atm_iv_put = EXCLUDED.atm_iv_put,
+                    atm_iv_avg = EXCLUDED.atm_iv_avg,
+                    spot = EXCLUDED.spot
+            """, (ticker, atm_iv_call, atm_iv_put, atm_iv_avg, spot))
+        except Exception as e:
+            logger.warning("Failed to store IV snapshot for %s: %s", ticker, e)
+
+    conn.commit()
+    conn.close()
 
 
 def _reprice_open_trades() -> int:

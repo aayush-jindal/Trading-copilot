@@ -9,8 +9,8 @@ at a time. Do not start the next task until the current one is verified.
 |------|--------|-------------|
 | `.claude/frontend_update.md` | Done | Frontend UI for chain scanner |
 | `.claude/nightly-cron.md` | Done | Nightly scan + rate limit throttle |
-| `.claude/phase-d-option-trades.md` | Active | Options trade tracker |
-| `.claude/phase-e-iv-history.md` | Queued | Historical IV tracking |
+| `.claude/phase-d-option-trades.md` | Done | Options trade tracker |
+| `.claude/phase-e-iv-history.md` | Active | Historical IV tracking |
 | `.claude/phases-f-g-h.md` | Queued | Signal correlation, alerts, backtesting |
 
 Work through files in order. When a phase file is complete, mark it

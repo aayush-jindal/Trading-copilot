@@ -390,6 +390,24 @@ def init_db() -> None:
             ON option_trades(expiry)
     """)
 
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS iv_history (
+            id               SERIAL PRIMARY KEY,
+            ticker           TEXT NOT NULL,
+            scan_date        DATE NOT NULL,
+            atm_iv_call      DOUBLE PRECISION,
+            atm_iv_put       DOUBLE PRECISION,
+            atm_iv_avg       DOUBLE PRECISION,
+            realized_vol_30d DOUBLE PRECISION,
+            spot             DOUBLE PRECISION,
+            UNIQUE (ticker, scan_date)
+        )
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_iv_history_ticker_date
+            ON iv_history(ticker, scan_date DESC)
+    """)
+
     conn.commit()
     conn.close()
 

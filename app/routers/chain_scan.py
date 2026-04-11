@@ -140,6 +140,58 @@ def get_cached_signals(
     }
 
 
+@router.get("/iv-history/{ticker}")
+def get_iv_history(
+    ticker: str,
+    days: int = Query(365, ge=1, le=730),
+    user: dict = Depends(get_current_user),
+):
+    """Return daily IV history for charting and current IV rank."""
+    ticker = ticker.upper()
+    db = get_db()
+    try:
+        rows = db.execute("""
+            SELECT scan_date, atm_iv_avg, realized_vol_30d, spot
+            FROM iv_history
+            WHERE ticker = %s
+              AND scan_date >= CURRENT_DATE - %s
+            ORDER BY scan_date ASC
+        """, (ticker, days)).fetchall()
+
+        # Compute current rank/percentile from history
+        current_rank = None
+        current_percentile = None
+        if rows:
+            ivs = [float(r["atm_iv_avg"]) for r in rows if r["atm_iv_avg"] is not None]
+            if len(ivs) >= 2:
+                current_iv = ivs[-1]
+                iv_min = min(ivs)
+                iv_max = max(ivs)
+                denom = iv_max - iv_min
+                if denom > 1e-10:
+                    current_rank = round((current_iv - iv_min) / denom * 100, 2)
+                    current_percentile = round(
+                        sum(1 for iv in ivs if iv < current_iv) / len(ivs) * 100, 2
+                    )
+    finally:
+        db.close()
+
+    return {
+        "ticker": ticker,
+        "history": [
+            {
+                "date": str(r["scan_date"]),
+                "atm_iv": r["atm_iv_avg"],
+                "rv_30d": r["realized_vol_30d"],
+                "spot": r["spot"],
+            }
+            for r in rows
+        ],
+        "current_rank": current_rank,
+        "current_percentile": current_percentile,
+    }
+
+
 def _save_signals(signals: list, user_id: int):
     if not signals:
         return

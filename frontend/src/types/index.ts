@@ -569,6 +569,20 @@ export interface CachedSignalsResponse {
   last_scan: string | null
 }
 
+export interface IVHistoryPoint {
+  date: string
+  atm_iv: number | null
+  rv_30d: number | null
+  spot: number | null
+}
+
+export interface IVHistoryResponse {
+  ticker: string
+  history: IVHistoryPoint[]
+  current_rank: number | null
+  current_percentile: number | null
+}
+
 export interface BacktestSignalCondition {
   label: string
   passed: boolean

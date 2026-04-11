@@ -96,7 +96,8 @@ class OptionsScanner:
 
         # 2. IV rank — use ATM call IV as the "current IV"
         atm_iv = self._get_atm_iv(snapshot)
-        iv_metrics = compute_iv_metrics(atm_iv, history)
+        iv_history_rows = self._fetch_iv_history(ticker)
+        iv_metrics = compute_iv_metrics(atm_iv, history, iv_history_rows=iv_history_rows)
 
         # 3. Fit GARCH
         garch_vol = atm_iv  # fallback
@@ -197,6 +198,26 @@ class OptionsScanner:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _fetch_iv_history(ticker: str, days: int = 365) -> list[dict]:
+        """Load IV history rows from the database (up to *days* back)."""
+        try:
+            from app.database import get_db
+            conn = get_db()
+            rows = conn.execute(
+                """SELECT atm_iv_avg, scan_date, spot
+                   FROM iv_history
+                   WHERE ticker = %s
+                     AND scan_date >= CURRENT_DATE - %s
+                   ORDER BY scan_date DESC""",
+                (ticker, days),
+            ).fetchall()
+            conn.close()
+            return [dict(r) for r in rows]
+        except Exception as e:
+            logger.debug("Could not fetch iv_history for %s: %s", ticker, e)
+            return []
 
     @staticmethod
     def _get_atm_iv(snapshot) -> float:

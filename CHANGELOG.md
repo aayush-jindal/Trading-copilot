@@ -27,6 +27,20 @@
 
 ---
 
+## 2026-04-11 — Phase E: Historical IV Tracking
+
+- [2026-04-11] Modified: app/database.py — Added iv_history table with UNIQUE(ticker, scan_date) and index (Task 1)
+- [2026-04-11] Modified: app/services/options/chain_scanner/iv_rank.py — Added real IV history path (iv_history_rows param), falls back to RV proxy when <30 days (Task 2)
+- [2026-04-11] Modified: app/services/options/chain_scanner/scanner.py — Query iv_history table and pass rows to compute_iv_metrics (Task 3)
+- [2026-04-11] Modified: app/services/options_digest.py — Store ATM IV snapshots per ticker into iv_history nightly (Task 4)
+- [2026-04-11] Modified: app/routers/chain_scan.py — Added GET /options/iv-history/{ticker} endpoint with rank/percentile (Task 5)
+- [2026-04-11] Modified: frontend/src/types/index.ts — Added IVHistoryPoint and IVHistoryResponse types (Task 6)
+- [2026-04-11] Modified: frontend/src/api/client.ts — Added getIVHistory() function (Task 6)
+- [2026-04-11] Modified: frontend/src/components/ChainScannerPanel.tsx — Added IVSparkline + IVHistoryWidget with "Real IV"/"Proxy IV" badge (Task 6)
+- [2026-04-11] Created: tests/test_iv_history.py — 16 tests: real IV path, proxy fallback, rank/percentile, regime, DTE (Task 7)
+
+---
+
 ## 2026-04-11 — Phase D: Options Trade Tracker
 
 - [2026-04-11] Modified: app/database.py — Added option_trades table with indexes
