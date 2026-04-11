@@ -2,6 +2,20 @@
 
 ---
 
+## 2026-04-11 — Phase F: Equity + Options Signal Correlation
+
+- [2026-04-11] Created: app/routers/unified_scan.py — Unified scan endpoint merging equity + options signals with correlation boost and hedge suggestions (Task 1)
+- [2026-04-11] Modified: app/main.py — Register unified_scan router
+
+---
+
+## 2026-04-11 — Phase E Complete
+
+- [2026-04-11] Modified: .claude/options-phases-claude.md — Marked Phase E (Historical IV Tracking) as Done
+- [2026-04-11] Modified: CLAUDE.md — Updated active phase pointer to phases-f-g-h.md
+
+---
+
 ## 2026-04-10 — Frontend Update: Chain Scanner UI
 
 - [2026-04-10] Modified: frontend/src/types/index.ts — Fixed knowledge_strategies type from `string | null` to `unknown` (Task 1)
