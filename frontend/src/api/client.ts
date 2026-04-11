@@ -10,6 +10,7 @@ import type {
   OptionTradeCreate,
   PriceHistoryResponse,
   StrategyResult,
+  UnifiedScanResponse,
   UserSettings,
   WatchlistDashboardItem,
   WatchlistItem,
@@ -346,6 +347,15 @@ export async function closeOptionTrade(tradeId: number, exitReason?: string): Pr
   if (exitReason) params.set('exit_reason', exitReason)
   const res = await apiFetch(`/api/option-trades/${tradeId}?${params}`, { method: 'DELETE' })
   if (!res.ok) throw new Error(`Failed to close option trade ${tradeId}`)
+}
+
+export async function unifiedScan(top = 20): Promise<UnifiedScanResponse> {
+  const res = await apiFetch(`/api/scan/unified?top=${top}`)
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({}))
+    throw new Error((detail as { detail?: string })?.detail ?? `Unified scan failed (${res.status})`)
+  }
+  return res.json()
 }
 
 export async function getIVHistory(ticker: string, days = 365): Promise<IVHistoryResponse> {

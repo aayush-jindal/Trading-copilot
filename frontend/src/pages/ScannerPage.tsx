@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { scanWatchlist } from '../api/client'
+import { scanWatchlist, unifiedScan } from '../api/client'
 import { useAuth } from '../context/AuthContext'
 import Logo from '../components/Logo'
 import LoadingSkeleton from '../components/LoadingSkeleton'
-import type { StrategyResult, StrategyType, Verdict } from '../types'
+import type { StrategyResult, StrategyType, Verdict, UnifiedSignal, UnifiedScanResponse } from '../types'
 
 // ── Color helpers ──────────────────────────────────────────────────────────────
 
@@ -21,12 +21,31 @@ const VERDICT_CHIP: Record<Verdict, { bg: string; border: string; text: string }
   NO_TRADE: { bg: 'bg-white/5',       border: 'border-white/10',       text: 'text-gray-400' },
 }
 
+const SOURCE_CHIP = {
+  equity:  { bg: 'bg-teal-500/15',   border: 'border-teal-500/30',   text: 'text-teal-300',   label: 'Equity' },
+  options: { bg: 'bg-indigo-500/15',  border: 'border-indigo-500/30', text: 'text-indigo-300', label: 'Options' },
+}
+
+const IV_REGIME_STYLE: Record<string, string> = {
+  LOW: 'bg-blue-500/15 text-blue-300 border-blue-500/30',
+  NORMAL: 'bg-white/5 text-gray-400 border-white/10',
+  ELEVATED: 'bg-yellow-500/15 text-yellow-300 border-yellow-500/30',
+  HIGH: 'bg-red-500/15 text-red-300 border-red-500/30',
+}
+
 function fmt(n: number | null | undefined): string {
-  if (n == null) return '—'
+  if (n == null) return '\u2014'
   return `$${n.toFixed(2)}`
 }
 
-// ── ScanRow — compact single-line result ─────────────────────────────────────
+function convictionColor(c: number): string {
+  if (c >= 80) return 'text-green-300'
+  if (c >= 60) return 'text-green-400'
+  if (c >= 30) return 'text-yellow-400'
+  return 'text-gray-500'
+}
+
+// ── ScanRow — equity-only row (original) ────────────────────────────────────
 
 function ScanRow({
   result,
@@ -47,7 +66,7 @@ function ScanRow({
 
         {/* Ticker */}
         <span className="font-mono text-base font-bold text-white w-16 flex-shrink-0">
-          {result.ticker ?? '—'}
+          {result.ticker ?? '\u2014'}
         </span>
 
         {/* Strategy type chip */}
@@ -74,10 +93,10 @@ function ScanRow({
         {result.risk && (
           <span className="text-[11px] text-gray-500 font-mono flex-shrink-0 ml-auto">
             E {fmt(result.risk.entry_price)}
-            {' · '}SL {fmt(result.risk.stop_loss)}
-            {' · '}T {fmt(result.risk.target)}
-            {' · '}R:R {result.risk.risk_reward.toFixed(2)}×
-            {result.risk.position_size != null && ` · ${result.risk.position_size}sh`}
+            {' \u00B7 '}SL {fmt(result.risk.stop_loss)}
+            {' \u00B7 '}T {fmt(result.risk.target)}
+            {' \u00B7 '}R:R {result.risk.risk_reward.toFixed(2)}\u00D7
+            {result.risk.position_size != null && ` \u00B7 ${result.risk.position_size}sh`}
           </span>
         )}
       </div>
@@ -85,13 +104,127 @@ function ScanRow({
   )
 }
 
+// ── UnifiedRow — renders both equity and options signals ─────────────────────
+
+function UnifiedRow({
+  signal,
+  onClick,
+}: {
+  signal: UnifiedSignal
+  onClick: () => void
+}) {
+  const sourceCfg = SOURCE_CHIP[signal.signal_source]
+  const isCorrelated = signal.signal_source === 'options'
+    ? !!signal.correlated_equity_signal
+    : !!signal.correlated_option_signal
+
+  if (signal.signal_source === 'equity') {
+    const typeCfg    = TYPE_CHIP[(signal.type as StrategyType) ?? 'trend'] ?? TYPE_CHIP.trend
+    const verdictCfg = VERDICT_CHIP[(signal.verdict as Verdict) ?? 'NO_TRADE'] ?? VERDICT_CHIP.NO_TRADE
+
+    return (
+      <div
+        onClick={onClick}
+        className={`glass rounded-xl px-4 py-3 border cursor-pointer hover:border-blue-500/40 hover:bg-white/[0.04] transition-all ${isCorrelated ? 'border-green-500/25 bg-green-500/[0.02]' : 'border-white/10'}`}
+      >
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="font-mono text-base font-bold text-white w-16 flex-shrink-0">
+            {signal.ticker ?? '\u2014'}
+          </span>
+          <span className={`inline-flex text-[10px] px-1.5 py-0.5 rounded-full border font-medium ${sourceCfg.bg} ${sourceCfg.border} ${sourceCfg.text}`}>
+            {sourceCfg.label}
+          </span>
+          <span className={`inline-flex text-[10px] px-1.5 py-0.5 rounded-full border font-medium ${typeCfg.bg} ${typeCfg.border} ${typeCfg.text}`}>
+            {typeCfg.label}
+          </span>
+          <span className="text-sm text-gray-400 font-mono flex-1 min-w-[100px]">
+            {signal.name}
+          </span>
+          <span className="text-xs text-gray-500 flex-shrink-0 tabular-nums">
+            {signal.score}<span className="text-gray-700">/100</span>
+          </span>
+          <span className={`inline-flex text-[10px] px-1.5 py-0.5 rounded-full border font-medium ${verdictCfg.bg} ${verdictCfg.border} ${verdictCfg.text}`}>
+            {signal.verdict}
+          </span>
+          {isCorrelated && (
+            <span className="inline-flex text-[10px] px-1.5 py-0.5 rounded-full border font-medium bg-green-500/15 border-green-500/30 text-green-300">
+              + Options
+            </span>
+          )}
+          {signal.risk && (
+            <span className="text-[11px] text-gray-500 font-mono flex-shrink-0 ml-auto">
+              E {fmt(signal.risk.entry_price)}
+              {' \u00B7 '}SL {fmt(signal.risk.stop_loss)}
+              {' \u00B7 '}T {fmt(signal.risk.target)}
+              {' \u00B7 '}R:R {signal.risk.risk_reward.toFixed(2)}\u00D7
+            </span>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  // Options signal
+  const ivStyle = IV_REGIME_STYLE[signal.iv_regime ?? 'NORMAL'] ?? IV_REGIME_STYLE.NORMAL
+
+  return (
+    <div
+      onClick={onClick}
+      className={`glass rounded-xl px-4 py-3 border cursor-pointer hover:border-blue-500/40 hover:bg-white/[0.04] transition-all ${isCorrelated ? 'border-green-500/25 bg-green-500/[0.02]' : 'border-white/10'}`}
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-mono text-base font-bold text-white w-16 flex-shrink-0">
+          {signal.ticker ?? '\u2014'}
+        </span>
+        <span className={`inline-flex text-[10px] px-1.5 py-0.5 rounded-full border font-medium ${sourceCfg.bg} ${sourceCfg.border} ${sourceCfg.text}`}>
+          {sourceCfg.label}
+        </span>
+        <span className={`inline-flex text-[10px] px-1.5 py-0.5 rounded-full border font-medium ${signal.option_type === 'call' ? 'bg-green-500/10 text-green-400 border-green-500/20' : 'bg-red-500/10 text-red-400 border-red-500/20'}`}>
+          {signal.option_type?.toUpperCase()}
+        </span>
+        <span className={`px-1.5 py-0.5 rounded-md border text-[10px] font-medium ${ivStyle}`}>
+          {signal.iv_regime}
+        </span>
+        <span className="text-sm text-gray-400 font-mono flex-1 min-w-[100px]">
+          {signal.recommended_strategy?.label ?? `$${signal.strike?.toFixed(0)} ${signal.expiry}`}
+        </span>
+        <span className={`text-xs font-mono ${(signal.edge_pct ?? 0) > 0 ? 'text-green-400' : (signal.edge_pct ?? 0) < 0 ? 'text-red-400' : 'text-gray-400'}`}>
+          edge {(signal.edge_pct ?? 0) > 0 ? '+' : ''}{signal.edge_pct?.toFixed(1)}%
+        </span>
+        <span className={`text-sm font-mono font-semibold ${convictionColor(signal.conviction ?? 0)}`}>
+          {signal.conviction?.toFixed(0)}
+        </span>
+        {isCorrelated && (
+          <span className="inline-flex text-[10px] px-1.5 py-0.5 rounded-full border font-medium bg-green-500/15 border-green-500/30 text-green-300">
+            + {signal.correlated_equity_signal}
+          </span>
+        )}
+        <span className="text-[11px] text-gray-500 font-mono flex-shrink-0">
+          {signal.dte}d \u00B7 ${signal.spot?.toFixed(2)}
+        </span>
+      </div>
+
+      {/* Hedge suggestion */}
+      {signal.hedge_suggestion && (
+        <div className="mt-2 px-3 py-2 rounded-lg border border-yellow-500/20 bg-yellow-500/5 text-xs text-yellow-300">
+          {signal.hedge_suggestion}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── ScannerPage ───────────────────────────────────────────────────────────────
+
+type ScanMode = 'equity' | 'unified'
 
 export default function ScannerPage() {
   const { logout, user } = useAuth()
   const navigate = useNavigate()
 
+  const [mode, setMode] = useState<ScanMode>('unified')
   const [results, setResults]       = useState<StrategyResult[]>([])
+  const [unifiedData, setUnifiedData] = useState<UnifiedScanResponse | null>(null)
   const [isLoading, setIsLoading]   = useState(false)
   const [error, setError]           = useState<string | null>(null)
   const [lastRun, setLastRun]       = useState<Date | null>(null)
@@ -100,8 +233,15 @@ export default function ScannerPage() {
     setIsLoading(true)
     setError(null)
     try {
-      const data = await scanWatchlist()
-      setResults(data)
+      if (mode === 'unified') {
+        const data = await unifiedScan(40)
+        setUnifiedData(data)
+        setResults([])
+      } else {
+        const data = await scanWatchlist()
+        setResults(data)
+        setUnifiedData(null)
+      }
       setLastRun(new Date())
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Scan failed')
@@ -110,13 +250,13 @@ export default function ScannerPage() {
     }
   }
 
-  // Run scan on mount
+  // Run scan on mount and when mode changes
   useEffect(() => {
     runScan()
-  }, [])
+  }, [mode])
 
-  // Sort: ENTRY first, then by score descending
-  const sorted = [...results].sort((a, b) => {
+  // Sort equity results: ENTRY first, then by score descending
+  const sortedEquity = [...results].sort((a, b) => {
     if (a.verdict === 'ENTRY' && b.verdict !== 'ENTRY') return -1
     if (b.verdict === 'ENTRY' && a.verdict !== 'ENTRY') return 1
     return b.score - a.score
@@ -175,35 +315,76 @@ export default function ScannerPage() {
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div>
             <h1 className="text-xl font-bold text-white">Morning Scan</h1>
-            {lastRun && (
-              <p className="text-xs text-gray-500 mt-0.5">
-                Last run: {lastRun.toLocaleTimeString()}
-              </p>
-            )}
+            <div className="flex items-center gap-3 mt-1">
+              {lastRun && (
+                <p className="text-xs text-gray-500">
+                  Last run: {lastRun.toLocaleTimeString()}
+                </p>
+              )}
+              {mode === 'unified' && unifiedData && (
+                <p className="text-xs text-gray-600">
+                  {unifiedData.equity_count} equity + {unifiedData.options_count} options from {unifiedData.tickers_scanned} tickers
+                </p>
+              )}
+            </div>
           </div>
-          <button
-            onClick={runScan}
-            disabled={isLoading}
-            className="px-4 py-2 text-sm font-medium rounded-lg border border-blue-500/40 text-blue-300 bg-blue-500/10 hover:bg-blue-500/15 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
-          >
-            {isLoading ? 'Scanning…' : 'Refresh'}
-          </button>
+
+          <div className="flex items-center gap-2">
+            {/* Mode toggle */}
+            <div className="flex rounded-lg border border-white/10 overflow-hidden">
+              {(['equity', 'unified'] as const).map((m) => (
+                <button
+                  key={m}
+                  onClick={() => setMode(m)}
+                  disabled={isLoading}
+                  className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                    mode === m
+                      ? 'bg-white/10 text-white'
+                      : 'text-gray-500 hover:text-gray-300 hover:bg-white/5'
+                  }`}
+                >
+                  {m === 'equity' ? 'Equity' : 'Unified'}
+                </button>
+              ))}
+            </div>
+
+            <button
+              onClick={runScan}
+              disabled={isLoading}
+              className="px-4 py-2 text-sm font-medium rounded-lg border border-blue-500/40 text-blue-300 bg-blue-500/10 hover:bg-blue-500/15 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+            >
+              {isLoading ? 'Scanning\u2026' : 'Refresh'}
+            </button>
+          </div>
         </div>
 
         {/* Error banner */}
         {error && (
           <div className="animate-fade-in border border-red-500/30 bg-red-500/10 text-red-300 rounded-xl px-4 py-3 text-sm">
-            ⚠ {error}
+            {error}
           </div>
         )}
 
-        {/* Loading — /scan/watchlist can take 5–10s; skeleton keeps UI responsive */}
+        {/* Loading */}
         {isLoading && <LoadingSkeleton />}
 
-        {/* Results list */}
-        {!isLoading && sorted.length > 0 && (
+        {/* Unified results */}
+        {!isLoading && mode === 'unified' && unifiedData && unifiedData.signals.length > 0 && (
           <div className="flex flex-col gap-2 animate-fade-in">
-            {sorted.map((result, i) => (
+            {unifiedData.signals.map((signal, i) => (
+              <UnifiedRow
+                key={`${signal.ticker}-${signal.signal_source}-${signal.name ?? signal.strike}-${i}`}
+                signal={signal}
+                onClick={() => handleRowClick(signal.ticker)}
+              />
+            ))}
+          </div>
+        )}
+
+        {/* Equity-only results */}
+        {!isLoading && mode === 'equity' && sortedEquity.length > 0 && (
+          <div className="flex flex-col gap-2 animate-fade-in">
+            {sortedEquity.map((result, i) => (
               <ScanRow
                 key={`${result.ticker}-${result.name}-${i}`}
                 result={result}
@@ -214,9 +395,12 @@ export default function ScannerPage() {
         )}
 
         {/* Empty state */}
-        {!isLoading && !error && sorted.length === 0 && (
+        {!isLoading && !error && (
+          (mode === 'equity' && sortedEquity.length === 0) ||
+          (mode === 'unified' && (!unifiedData || unifiedData.signals.length === 0))
+        ) && (
           <div className="flex flex-col items-center justify-center flex-1 py-32 gap-4 animate-fade-in">
-            <div className="text-5xl opacity-30">🔍</div>
+            <div className="text-5xl opacity-30">{'\uD83D\uDD0D'}</div>
             <p className="text-gray-500 text-sm">No strategy setups firing on your watchlist right now.</p>
             <p className="text-gray-600 text-xs">Add tickers to your watchlist or check back later.</p>
           </div>

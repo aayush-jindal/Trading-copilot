@@ -583,6 +583,58 @@ export interface IVHistoryResponse {
   current_percentile: number | null
 }
 
+// ── Unified scan (Phase F) ────────────────────────────────────────────────────
+
+export interface UnifiedSignal {
+  signal_source: 'equity' | 'options'
+  ticker: string | null
+
+  // Equity fields (signal_source === 'equity')
+  name?: string
+  type?: StrategyType
+  verdict?: Verdict
+  score?: number
+  conditions?: Condition[]
+  risk?: RiskLevels | null
+  correlated_option_signal?: boolean
+
+  // Options fields (signal_source === 'options')
+  strike?: number
+  expiry?: string
+  option_type?: 'call' | 'put'
+  dte?: number
+  spot?: number
+  bid?: number
+  ask?: number
+  mid?: number
+  open_interest?: number
+  bid_ask_spread_pct?: number
+  chain_iv?: number
+  iv_rank?: number
+  iv_percentile?: number
+  iv_regime?: 'LOW' | 'NORMAL' | 'ELEVATED' | 'HIGH'
+  garch_vol?: number
+  theo_price?: number
+  edge_pct?: number
+  direction?: 'BUY' | 'SELL'
+  delta?: number
+  gamma?: number
+  theta?: number
+  vega?: number
+  conviction?: number
+  correlated_equity_signal?: string | null
+  recommended_strategy?: { strategy: string; label: string; rationale: string } | null
+  hedge_suggestion?: string | null
+}
+
+export interface UnifiedScanResponse {
+  signals: UnifiedSignal[]
+  total: number
+  tickers_scanned: number
+  equity_count: number
+  options_count: number
+}
+
 export interface BacktestSignalCondition {
   label: string
   passed: boolean

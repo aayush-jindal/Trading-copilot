@@ -6,6 +6,11 @@
 
 - [2026-04-11] Created: app/routers/unified_scan.py — Unified scan endpoint merging equity + options signals with correlation boost and hedge suggestions (Task 1)
 - [2026-04-11] Modified: app/main.py — Register unified_scan router
+- [2026-04-11] Modified: frontend/src/types/index.ts — Added UnifiedSignal and UnifiedScanResponse types (Task 2)
+- [2026-04-11] Modified: frontend/src/api/client.ts — Added unifiedScan() function (Task 2)
+- [2026-04-11] Modified: frontend/src/pages/ScannerPage.tsx — Added Unified mode with equity/options toggle, UnifiedRow component, correlation badges, hedge suggestions (Task 3)
+- [2026-04-11] Modified: .claude/options-phases-claude.md — Marked Phase F as Done
+- [2026-04-11] Created: docs/usage-guide.md — Comprehensive usage guide covering all pages, workflows, signal layers, IV rank, conviction scoring, daily workflow, and tips
 
 ---
 
