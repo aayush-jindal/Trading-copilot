@@ -1,5 +1,7 @@
 import type {
   AnalysisResponse,
+  CachedSignalsResponse,
+  ChainScanResponse,
   Notification,
   OpenTrade,
   OptionsScanResponse,
@@ -168,6 +170,43 @@ export async function scanOptions(
   if (!res.ok) {
     const detail = await res.json().catch(() => ({}))
     throw new Error((detail as { detail?: string })?.detail ?? `Options scan failed (${res.status})`)
+  }
+  return res.json()
+}
+
+// ── Chain scanner ─────────────────────────────────────────────────────────────
+
+export async function chainScan(
+  tickers: string[],
+  options: { top?: number; price?: boolean } = {}
+): Promise<ChainScanResponse> {
+  const params = new URLSearchParams()
+  params.set('tickers', tickers.join(','))
+  if (options.top) params.set('top', String(options.top))
+  if (options.price) params.set('price', 'true')
+
+  const res = await apiFetch(`/api/options/chain-scan?${params}`)
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({}))
+    throw new Error(
+      (detail as { detail?: string })?.detail ?? `Chain scan failed (${res.status})`
+    )
+  }
+  return res.json()
+}
+
+export async function getCachedSignals(
+  ticker?: string
+): Promise<CachedSignalsResponse> {
+  const params = new URLSearchParams()
+  if (ticker) params.set('ticker', ticker)
+
+  const res = await apiFetch(`/api/options/chain-signals?${params}`)
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({}))
+    throw new Error(
+      (detail as { detail?: string })?.detail ?? `Failed to load cached signals (${res.status})`
+    )
   }
   return res.json()
 }

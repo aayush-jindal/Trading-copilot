@@ -2,6 +2,31 @@
 
 ---
 
+## 2026-04-10 — Frontend Update: Chain Scanner UI
+
+- [2026-04-10] Modified: frontend/src/types/index.ts — Fixed knowledge_strategies type from `string | null` to `unknown` (Task 1)
+- [2026-04-10] Modified: frontend/src/types/index.ts — Added chain scanner types: ChainSignal, ChainSignalLeg, StrategyRecommendation, PricedStrategy, ChainScanResponse (Task 2)
+- [2026-04-10] Modified: frontend/src/api/client.ts — Added chainScan() API client function for GET /options/chain-scan (Task 3)
+- [2026-04-10] Created: frontend/src/components/ChainScannerPanel.tsx — Chain scanner UI with signal cards, IV regime badges, conviction scores, edge metrics, priced strategies, sorting (Task 4)
+- [2026-04-10] Modified: frontend/src/pages/AnalysisPage.tsx — Added "Chain Scanner" as third tab alongside Analysis and Options (Task 5)
+- [2026-04-10] No change: frontend/src/pages/OptionsPage.tsx — Standalone /options route works after 500 fix, kept as-is (Task 6)
+
+---
+
+## 2026-04-10 — Nightly Cron: Rate Limit Handling
+
+- [2026-04-10] Modified: app/services/options/chain_scanner/providers/yfinance_provider.py — Added throttle (delay between yfinance API calls) to avoid rate limits (Task 1)
+- [2026-04-10] Modified: app/services/options/chain_scanner/providers/__init__.py — Added delay param to create_provider factory
+- [2026-04-10] Modified: app/routers/chain_scan.py — Live endpoint uses delay=0.5s
+- [2026-04-11] Created: app/services/options_digest.py — Nightly chain scan function, stores signals per user (Task 2)
+- [2026-04-11] Modified: app/services/digest.py — Wire nightly chain scan into run_nightly_refresh() (Task 3)
+- [2026-04-11] Modified: app/routers/chain_scan.py — Added GET /options/chain-signals endpoint for cached nightly results (Task 4)
+- [2026-04-11] Modified: frontend/src/types/index.ts — Added CachedSignalsResponse type
+- [2026-04-11] Modified: frontend/src/api/client.ts — Added getCachedSignals() function
+- [2026-04-11] Modified: frontend/src/components/ChainScannerPanel.tsx — Load cached signals on mount with "Last scanned" timestamp (Task 5)
+
+---
+
 ## 2026-04-08 — Phase C: Price Recommended Strategies
 
 - [2026-04-08] Created: app/services/options/chain_scanner/strategy_pricer.py — BS pricing + MC prob_profit for recommended strategies

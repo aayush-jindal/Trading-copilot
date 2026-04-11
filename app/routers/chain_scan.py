@@ -45,7 +45,7 @@ def chain_scan(
     if not ticker_list:
         return {"signals": [], "total": 0, "tickers_scanned": 0}
 
-    provider = create_provider()
+    provider = create_provider(delay=0.5)
     signals = scan_watchlist(ticker_list, provider=provider, config=CHAIN_SCANNER_CONFIG)
 
     _save_signals(signals, user["id"])
@@ -95,6 +95,49 @@ def _to_dict(s: OptionSignal, do_price: bool = False) -> dict:
         base["priced_strategy"] = None
 
     return base
+
+
+@router.get("/chain-signals")
+def get_cached_signals(
+    ticker: Optional[str] = Query(None),
+    top: int = Query(20, ge=1, le=100),
+    user: dict = Depends(get_current_user),
+):
+    """Return latest nightly chain scan results from DB. No live yfinance calls."""
+    db = get_db()
+    try:
+        if ticker:
+            rows = db.execute("""
+                SELECT * FROM option_signals
+                WHERE user_id = %s AND ticker = %s
+                ORDER BY scanned_at DESC, conviction DESC
+                LIMIT %s
+            """, (user["id"], ticker.upper(), top)).fetchall()
+        else:
+            # Get most recent scan batch
+            rows = db.execute("""
+                SELECT * FROM option_signals
+                WHERE user_id = %s
+                AND scanned_at >= (
+                    SELECT MAX(scanned_at) - INTERVAL '1 minute'
+                    FROM option_signals WHERE user_id = %s
+                )
+                ORDER BY conviction DESC
+                LIMIT %s
+            """, (user["id"], user["id"], top)).fetchall()
+
+        last_scan = db.execute("""
+            SELECT MAX(scanned_at) as last_scan
+            FROM option_signals WHERE user_id = %s
+        """, (user["id"],)).fetchone()
+    finally:
+        db.close()
+
+    return {
+        "signals": [dict(r) for r in rows],
+        "total": len(rows),
+        "last_scan": str(last_scan["last_scan"]) if last_scan and last_scan["last_scan"] else None,
+    }
 
 
 def _save_signals(signals: list, user_id: int):

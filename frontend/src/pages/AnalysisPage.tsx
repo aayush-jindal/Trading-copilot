@@ -23,6 +23,7 @@ import BookStrategiesPanel, { type BookStrategiesData } from '../components/Book
 import TickerCard from '../components/TickerCard'
 import LoadingSkeleton from '../components/LoadingSkeleton'
 import { useAuth } from '../context/AuthContext'
+import ChainScannerPanel from '../components/ChainScannerPanel'
 import { OptionsContent } from './OptionsPage'
 import type { AnalysisResponse, PriceBar, StrategyResult, TickerInfo } from '../types'
 
@@ -75,7 +76,7 @@ export default function AnalysisPage() {
   const [unreadCount, setUnreadCount]     = useState(0)
 
   // Tab state
-  const [activeTab, setActiveTab] = useState<'analysis' | 'options'>('analysis')
+  const [activeTab, setActiveTab] = useState<'analysis' | 'options' | 'chain'>('analysis')
 
   const closeStreamRef = useRef<(() => void) | null>(null)
 
@@ -294,7 +295,7 @@ export default function AnalysisPage() {
 
         {/* Tab bar */}
         <div className="flex gap-1 border-b border-white/8 pb-0">
-          {(['analysis', 'options'] as const).map((tab) => (
+          {(['analysis', 'options', 'chain'] as const).map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -304,10 +305,13 @@ export default function AnalysisPage() {
                   : 'text-gray-500 border-transparent hover:text-gray-300 hover:border-white/20'
               }`}
             >
-              {tab === 'analysis' ? 'Analysis' : 'Options Scanner'}
+              {tab === 'analysis' ? 'Analysis' : tab === 'options' ? 'Options' : 'Chain Scanner'}
             </button>
           ))}
         </div>
+
+        {/* Chain Scanner tab */}
+        {activeTab === 'chain' && <ChainScannerPanel />}
 
         {/* Options tab */}
         {activeTab === 'options' && <OptionsContent />}

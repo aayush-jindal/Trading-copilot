@@ -18,7 +18,8 @@ from .yfinance_provider import YFinanceProvider
 def create_provider(name: str = 'yfinance',
                     cache: bool = True,
                     chain_ttl: int = 900,
-                    history_ttl: int = 3600) -> ChainProvider:
+                    history_ttl: int = 3600,
+                    delay: float = 1.0) -> ChainProvider:
     """Factory: create a data provider by name, optionally wrapped in cache.
 
     Parameters
@@ -31,13 +32,15 @@ def create_provider(name: str = 'yfinance',
         Cache TTL in seconds for spot/chain data (default 900 = 15 min).
     history_ttl : int
         Cache TTL in seconds for history/risk-free rate (default 3600 = 1 hr).
+    delay : float
+        Seconds between yfinance API calls to avoid rate limits (default 1.0).
 
     Returns
     -------
     ChainProvider
     """
     if name == 'yfinance':
-        provider = YFinanceProvider()
+        provider = YFinanceProvider(delay=delay)
     else:
         raise ValueError(f"Unknown provider: {name!r}. Supported: 'yfinance'")
 

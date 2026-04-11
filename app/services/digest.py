@@ -225,8 +225,19 @@ def run_nightly_refresh() -> dict:
         except Exception:
             pass
 
+    # Options chain scan (after equity data is fresh)
+    options_result = {}
+    try:
+        from app.services.options_digest import run_nightly_chain_scan
+        options_result = run_nightly_chain_scan()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error("Nightly options scan failed: %s", e)
+        options_result = {"options_signals": 0, "options_errors": 1}
+
     return {
         "tickers_refreshed": len(tickers) - refresh_errors,
         "users_notified": len(user_ids),
         "duration_seconds": round(time.time() - start, 1),
+        **options_result,
     }

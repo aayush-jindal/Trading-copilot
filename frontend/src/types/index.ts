@@ -249,7 +249,7 @@ export interface OptionsTickerResult {
   sector?: string | null
   current_price?: number | null
   opportunities: OptionsOpportunity[]
-  knowledge_strategies?: string | null
+  knowledge_strategies?: unknown
   error?: string | null
 }
 
@@ -439,6 +439,89 @@ export interface BacktestRun {
   compound_final_pot: number | null
   created_at: string | null
   completed_at: string | null
+}
+
+// ── Chain scanner (Phase A-C) ─────────────────────────────────────────────
+
+export interface ChainSignalLeg {
+  action: 'buy' | 'sell'
+  option_type: 'call' | 'put'
+  strike: number
+  iv: number
+  price: number
+  delta: number
+  theta: number
+}
+
+export interface StrategyRecommendation {
+  strategy: string
+  label: string
+  rationale: string
+  legs: { action: string; option_type: string; strike_method: string }[]
+  suggested_dte: number
+  risk_profile: 'defined' | 'undefined'
+  edge_source: string
+}
+
+export interface PricedStrategy {
+  strategy: string
+  is_credit: boolean
+  legs: ChainSignalLeg[]
+  spread_width?: number | null
+  entry: number
+  exit_target: number
+  exit_pct: number
+  option_stop: number
+  max_profit: number | null
+  max_loss: number | null
+  net_delta: number
+  net_gamma: number
+  net_theta: number
+  net_vega: number
+  prob_profit: number
+  expected_payoff: number
+  risk_reward: string
+}
+
+export interface ChainSignal {
+  ticker: string
+  strike: number
+  expiry: string
+  option_type: 'call' | 'put'
+  dte: number
+  spot: number
+  bid: number
+  ask: number
+  mid: number
+  open_interest: number
+  bid_ask_spread_pct: number
+  chain_iv: number
+  iv_rank: number
+  iv_percentile: number
+  iv_regime: 'LOW' | 'NORMAL' | 'ELEVATED' | 'HIGH'
+  garch_vol: number
+  theo_price: number
+  edge_pct: number
+  direction: 'BUY' | 'SELL'
+  delta: number
+  gamma: number
+  theta: number
+  vega: number
+  conviction: number
+  recommended_strategy?: StrategyRecommendation | null
+  priced_strategy?: PricedStrategy | null
+}
+
+export interface ChainScanResponse {
+  signals: ChainSignal[]
+  total: number
+  tickers_scanned: number
+}
+
+export interface CachedSignalsResponse {
+  signals: Record<string, unknown>[]
+  total: number
+  last_scan: string | null
 }
 
 export interface BacktestSignalCondition {
