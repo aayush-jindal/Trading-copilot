@@ -11,7 +11,7 @@ at a time. Do not start the next task until the current one is verified.
 | `.claude/nightly-cron.md` | Done | Nightly scan + rate limit throttle |
 | `.claude/phase-d-option-trades.md` | Done | Options trade tracker |
 | `.claude/phase-e-iv-history.md` | Done | Historical IV tracking |
-| `.claude/phases-f-g-h.md` | F Done, G/H Queued | Signal correlation done; alerts, backtesting queued |
+| `.claude/phases-f-g-h.md` | F/G Done, H Queued | Signal correlation + alerts done; backtesting queued |
 
 Work through files in order. When a phase file is complete, mark it
 done in this table and move to the next.
