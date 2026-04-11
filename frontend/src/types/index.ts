@@ -287,8 +287,11 @@ export interface DigestContent {
   entries: DigestEntry[]
 }
 
+export type NotificationType = 'digest' | 'option_exit' | 'option_signal' | 'iv_alert'
+
 export interface Notification {
   id: number
+  type: NotificationType
   content: DigestContent
   created_at: string
   is_read: boolean

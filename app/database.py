@@ -136,6 +136,12 @@ def init_db() -> None:
         )
     """)
 
+    # Phase G: notification type for icon/color mapping in frontend
+    conn.execute("""
+        ALTER TABLE notifications
+            ADD COLUMN IF NOT EXISTS type VARCHAR(30) DEFAULT 'digest'
+    """)
+
     # Backtesting player: runs and signals (isolated from main copilot)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS backtest_runs (

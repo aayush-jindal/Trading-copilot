@@ -2,6 +2,14 @@
 
 ---
 
+## 2026-04-11 — Phase G: Alerts + Notifications
+
+- [2026-04-11] Modified: app/database.py — Added `type` column (VARCHAR(30)) to notifications table
+- [2026-04-11] Modified: app/routers/notifications.py — Added `type` field to Notification model and query
+- [2026-04-11] Modified: app/services/options_digest.py — Added high conviction and IV rank alert generators, tagged trade alerts with type
+- [2026-04-11] Modified: frontend/src/types/index.ts — Added NotificationType union type to Notification interface
+- [2026-04-11] Modified: frontend/src/components/NotificationsPanel.tsx — Icon/color mapping per notification type (digest, option_exit, option_signal, iv_alert)
+
 ## 2026-04-11 — Phase F: Equity + Options Signal Correlation
 
 - [2026-04-11] Created: app/routers/unified_scan.py — Unified scan endpoint merging equity + options signals with correlation boost and hedge suggestions (Task 1)

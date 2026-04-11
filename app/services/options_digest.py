@@ -80,14 +80,18 @@ def run_nightly_chain_scan() -> dict:
     # Store daily IV snapshots for iv_history
     _store_iv_snapshots(signals)
 
-    # Reprice open option trades and generate alerts
+    # Reprice open option trades and generate exit alerts
     alerts_sent = _reprice_open_trades()
+
+    # Phase G: high conviction + IV rank alerts
+    conviction_alerts = _generate_high_conviction_alerts(signals)
+    iv_alerts = _generate_iv_rank_alerts(signals)
 
     return {
         "options_signals": len(signals),
         "options_tickers": len(tickers),
         "options_errors": errors,
-        "options_alerts": alerts_sent,
+        "options_alerts": alerts_sent + conviction_alerts + iv_alerts,
         "options_duration": round(time.time() - start, 1),
     }
 
@@ -179,9 +183,9 @@ def _reprice_open_trades() -> int:
                     }],
                 })
                 conn.execute(
-                    "INSERT INTO notifications (user_id, content, created_at, is_read) "
-                    "VALUES (%s, %s, %s, FALSE)",
-                    (row["user_id"], content,
+                    "INSERT INTO notifications (user_id, type, content, created_at, is_read) "
+                    "VALUES (%s, %s, %s, %s, FALSE)",
+                    (row["user_id"], "option_exit", content,
                      datetime.now(timezone.utc).isoformat()),
                 )
                 conn.commit()
@@ -190,4 +194,126 @@ def _reprice_open_trades() -> int:
         except Exception as e:
             logger.warning("Failed to reprice trade %s: %s", row.get("id"), e)
 
+    return alerts_sent
+
+
+def _generate_high_conviction_alerts(signals: list) -> int:
+    """Create notifications for signals with conviction > 70."""
+    import json
+    from datetime import datetime, timezone
+
+    if not signals:
+        return 0
+
+    high_conv = [s for s in signals if s.conviction and s.conviction > 70]
+    if not high_conv:
+        return 0
+
+    # Get user→tickers map so we only alert users watching the ticker
+    conn = get_db()
+    user_rows = conn.execute(
+        "SELECT user_id, ticker_symbol FROM watchlists"
+    ).fetchall()
+    conn.close()
+
+    user_tickers: dict[int, set[str]] = {}
+    for r in user_rows:
+        user_tickers.setdefault(r["user_id"], set()).add(r["ticker_symbol"])
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    date_str = datetime.now(timezone.utc).strftime("%b %-d")
+    alerts_sent = 0
+
+    # Group high-conviction signals by ticker for compact notifications
+    by_ticker: dict[str, list] = {}
+    for s in high_conv:
+        by_ticker.setdefault(s.ticker, []).append(s)
+
+    conn = get_db()
+    for user_id, watched in user_tickers.items():
+        entries = []
+        for ticker in sorted(by_ticker):
+            if ticker not in watched:
+                continue
+            best = max(by_ticker[ticker], key=lambda s: s.conviction)
+            entries.append({
+                "ticker": best.ticker,
+                "summary": (
+                    f"{best.direction.upper()} {best.option_type} "
+                    f"${best.strike:.0f} — {best.conviction:.0f}% conviction "
+                    f"({best.iv_regime} IV)"
+                ),
+            })
+
+        if entries:
+            content = json.dumps({"date": date_str, "entries": entries})
+            conn.execute(
+                "INSERT INTO notifications (user_id, type, content, created_at, is_read) "
+                "VALUES (%s, %s, %s, %s, FALSE)",
+                (user_id, "option_signal", content, now_iso),
+            )
+            alerts_sent += 1
+
+    conn.commit()
+    conn.close()
+    return alerts_sent
+
+
+def _generate_iv_rank_alerts(signals: list) -> int:
+    """Create notifications when IV rank crosses above 80 or below 20."""
+    import json
+    from datetime import datetime, timezone
+
+    if not signals:
+        return 0
+
+    # Deduplicate: one alert per ticker, using the first signal's IV rank
+    seen: dict[str, float] = {}
+    for s in signals:
+        if s.ticker not in seen and s.iv_rank is not None:
+            seen[s.ticker] = s.iv_rank
+
+    # Filter to extreme IV rank tickers
+    extreme = {t: rank for t, rank in seen.items() if rank >= 80 or rank <= 20}
+    if not extreme:
+        return 0
+
+    conn = get_db()
+    user_rows = conn.execute(
+        "SELECT user_id, ticker_symbol FROM watchlists"
+    ).fetchall()
+    conn.close()
+
+    user_tickers: dict[int, set[str]] = {}
+    for r in user_rows:
+        user_tickers.setdefault(r["user_id"], set()).add(r["ticker_symbol"])
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    date_str = datetime.now(timezone.utc).strftime("%b %-d")
+    alerts_sent = 0
+
+    conn = get_db()
+    for user_id, watched in user_tickers.items():
+        entries = []
+        for ticker in sorted(extreme):
+            if ticker not in watched:
+                continue
+            rank = extreme[ticker]
+            label = "HIGH" if rank >= 80 else "LOW"
+            entries.append({
+                "ticker": ticker,
+                "summary": f"IV Rank {rank:.0f} ({label}) — consider {('selling' if label == 'HIGH' else 'buying')} premium",
+            })
+
+        if entries:
+            content = json.dumps({"date": date_str, "entries": entries})
+            conn.execute(
+                "INSERT INTO notifications (user_id, type, content, created_at, is_read) "
+                "VALUES (%s, %s, %s, %s, FALSE)",
+                (user_id, "iv_alert", content, now_iso),
+            )
+            alerts_sent += 1
+
+    conn.commit()
+    conn.close()
     return alerts_sent

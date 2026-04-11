@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { getNotifications, markAllNotificationsRead } from '../api/client'
-import type { Notification } from '../types'
+import type { Notification, NotificationType } from '../types'
 
 function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString('en-US', {
@@ -10,6 +10,13 @@ function formatDate(iso: string) {
     hour: '2-digit',
     minute: '2-digit',
   })
+}
+
+const NOTIFICATION_STYLE: Record<NotificationType, { icon: string; label: string; color: string }> = {
+  digest: { icon: '📊', label: 'Daily Digest', color: 'text-blue-400' },
+  option_exit: { icon: '🚨', label: 'Trade Alert', color: 'text-red-400' },
+  option_signal: { icon: '📈', label: 'Options Signal', color: 'text-green-400' },
+  iv_alert: { icon: '⚡', label: 'IV Alert', color: 'text-yellow-400' },
 }
 
 interface Props {
@@ -66,7 +73,7 @@ export default function NotificationsPanel({ onClose, onUnreadChange }: Props) {
       >
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
-          <h2 className="text-sm font-semibold text-white">Daily Digest</h2>
+          <h2 className="text-sm font-semibold text-white">Notifications</h2>
           <button
             onClick={onClose}
             className="text-gray-500 hover:text-white transition-colors text-lg leading-none"
@@ -94,15 +101,18 @@ export default function NotificationsPanel({ onClose, onUnreadChange }: Props) {
             </div>
           )}
 
-          {!isLoading && notifications.map((notification) => (
+          {!isLoading && notifications.map((notification) => {
+            const style = NOTIFICATION_STYLE[notification.type] || NOTIFICATION_STYLE.digest
+            return (
             <div
               key={notification.id}
               className="mx-3 my-2 rounded-xl border border-white/8 bg-white/[0.03] p-4"
             >
-              {/* Digest header */}
+              {/* Notification header */}
               <div className="flex items-center justify-between mb-3">
-                <span className="text-xs font-semibold text-blue-400 uppercase tracking-wide">
-                  {notification.content.date}
+                <span className={`text-xs font-semibold ${style.color} uppercase tracking-wide flex items-center gap-1.5`}>
+                  <span>{style.icon}</span>
+                  <span>{notification.type !== 'digest' ? style.label + ' — ' : ''}{notification.content.date}</span>
                 </span>
                 <span className="text-xs text-gray-600">
                   {formatDate(notification.created_at)}
@@ -124,7 +134,7 @@ export default function NotificationsPanel({ onClose, onUnreadChange }: Props) {
                 ))}
               </div>
             </div>
-          ))}
+          )})}
         </div>
       </div>
     </>

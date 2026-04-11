@@ -18,6 +18,7 @@ router = APIRouter(prefix="/notifications", tags=["notifications"])
 
 class Notification(BaseModel):
     id: int
+    type: str = "digest"
     content: dict
     created_at: str
     is_read: bool
@@ -28,7 +29,7 @@ def get_notifications(user: dict = Depends(get_current_user)):
     """Return the 50 most recent notifications for the authenticated user."""
     conn = get_db()
     rows = conn.execute(
-        """SELECT id, content, created_at, is_read
+        """SELECT id, type, content, created_at, is_read
            FROM notifications WHERE user_id = %s
            ORDER BY created_at DESC LIMIT 50""",
         (user["id"],),
@@ -38,6 +39,7 @@ def get_notifications(user: dict = Depends(get_current_user)):
     return [
         Notification(
             id=r["id"],
+            type=r["type"] or "digest",
             content=json.loads(r["content"]),
             created_at=r["created_at"],
             is_read=bool(r["is_read"]),
