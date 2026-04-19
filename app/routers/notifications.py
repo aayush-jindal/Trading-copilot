@@ -7,6 +7,8 @@ PATCH  /notifications/{id}/read  — mark a single notification as read
 PATCH  /notifications/read-all   — mark all notifications as read
 """
 
+import json
+
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
@@ -35,7 +37,6 @@ def get_notifications(user: dict = Depends(get_current_user)):
         (user["id"],),
     ).fetchall()
     conn.close()
-    import json
     return [
         Notification(
             id=r["id"],

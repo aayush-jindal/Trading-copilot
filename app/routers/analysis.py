@@ -5,8 +5,12 @@ GET /analyze/{ticker}/knowledge-strategies — RAG pipeline: signals → book
                                              retrieval → Claude → strategies
 """
 
+from datetime import date
+
+import psycopg2.extras
 from fastapi import APIRouter, HTTPException
 
+from app.database import get_db
 from app.models import AnalysisResponse
 from app.services.market_data import get_or_refresh_data, get_or_refresh_hourly_data, get_weekly_prices
 from app.services.ta_engine import _prepare_dataframe, analyze_ticker
@@ -60,12 +64,6 @@ def knowledge_strategies(ticker: str):
     Results are cached per (ticker, calendar date). On a cache hit the Claude
     call is skipped and the cached dict is returned immediately.
     """
-    from datetime import date
-
-    import psycopg2.extras
-
-    from app.database import get_db
-
     symbol = ticker.upper()
     today = date.today()
 

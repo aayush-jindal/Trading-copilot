@@ -2,6 +2,14 @@
 
 ---
 
+## 2026-04-19 — R6 (partial): Dead code removal and import cleanup
+
+- [2026-04-19] Modified: app/dependencies.py — Removed unused `require_internal_token()` function (duplicated by `_verify_internal()` in internal.py); removed orphaned `HTTPException`/`status` imports
+- [2026-04-19] Modified: app/routers/notifications.py — Hoisted inline `import json` to module-level imports
+- [2026-04-19] Modified: app/routers/analysis.py — Hoisted inline `from datetime import date`, `import psycopg2.extras`, `from app.database import get_db` to module-level imports
+
+---
+
 ## 2026-04-11 — Phase G: Alerts + Notifications
 
 - [2026-04-11] Modified: app/database.py — Added `type` column (VARCHAR(30)) to notifications table
